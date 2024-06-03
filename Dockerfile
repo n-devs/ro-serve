@@ -27,7 +27,7 @@ RUN apt-get -y install default-libmysqlclient-dev
 RUN apt update && apt -y upgrade
 
 # ---- File Emulador ---- #
-RUN mkdir ro-serve
+# RUN mkdir ro-serve
 # COPY entrypoint.sh ../emulador
 WORKDIR /ro-serve
 # RUN dos2unix -f entrypoint.sh
