@@ -10,18 +10,18 @@
 #include <unordered_map>
 #include <vector>
 
-#include <common/cbasetypes.hpp>
-#include <common/db.hpp>
-#include <common/ers.hpp>
-#include <common/malloc.hpp>
-#include <common/nullpo.hpp>
-#include <common/random.hpp>
-#include <common/showmsg.hpp>
-#include <common/socket.hpp>
-#include <common/strlib.hpp>
-#include <common/timer.hpp>
-#include <common/utilities.hpp>
-#include <common/utils.hpp>
+#include "../common/cbasetypes.hpp"
+#include "../common/db.hpp"
+#include "../common/ers.hpp"
+#include "../common/malloc.hpp"
+#include "../common/nullpo.hpp"
+#include "../common/random.hpp"
+#include "../common/showmsg.hpp"
+#include "../common/socket.hpp"
+#include "../common/strlib.hpp"
+#include "../common/timer.hpp"
+#include "../common/utilities.hpp"
+#include "../common/utils.hpp"
 
 #include "achievement.hpp"
 #include "battle.hpp"
@@ -48,6 +48,7 @@ using namespace rathena;
 #define IDLE_SKILL_INTERVAL 10	//Active idle skills should be triggered every 1 second (1000/MIN_MOBTHINKTIME)
 
 const t_tick MOB_MAX_DELAY = 24 * 3600 * 1000;
+#define MAX_MINCHASE 30	//Max minimum chase value to use for mobs.
 #define RUDE_ATTACKED_COUNT 1	//After how many rude-attacks should the skill be used?
 
 // On official servers, monsters will only seek targets that are closer to walk to than their
@@ -87,7 +88,6 @@ static struct eri *item_drop_list_ers;
 
 MobSummonDatabase mob_summon_db;
 MobChatDatabase mob_chat_db;
-MapDropDatabase map_drop_db;
 
 /*==========================================
  * Local prototype declaration   (only required thing)
@@ -236,7 +236,7 @@ void mvptomb_destroy(struct mob_data *md) {
 	struct npc_data *nd;
 
 	if ( (nd = map_id2nd(md->tomb_nid)) ) {
-		int i;
+		int16 i;
 		struct map_data *mapdata = map_getmapdata(nd->bl.m);
 
 		clif_clearunit_area(&nd->bl,CLR_OUTSIGHT);
@@ -314,19 +314,16 @@ std::shared_ptr<s_mob_db> mobdb_search_aegisname( const char* str ){
 }
 
 /*==========================================
- * Searches up to N matches. Returns number of matches [Skotlex]
+ * Founds up to N matches. Returns number of matches [Skotlex]
  *------------------------------------------*/
-uint16 mobdb_searchname_array_(const char *str, uint16 * out, uint16 size, bool full_cmp)
+int mobdb_searchname_array_(const char *str, uint16 * out, int size, bool full_cmp)
 {
-	uint16 count = 0;
-	const auto &mob_list = mob_db.getCache();
-
-	for( const auto &mob : mob_list ) {
-		if (mob == nullptr)
-			continue;
-		if( mobdb_searchname_sub(mob->id, str, full_cmp) ) {
+	unsigned short count = 0;
+	for( auto const &mobdb_pair : mob_db ) {
+		const uint16 mob_id = mobdb_pair.first;
+		if( mobdb_searchname_sub(mob_id, str, full_cmp) ) {
 			if( count < size )
-				out[count] = mob->id;
+				out[count] = mob_id;
 			count++;
 		}
 	}
@@ -334,7 +331,7 @@ uint16 mobdb_searchname_array_(const char *str, uint16 * out, uint16 size, bool 
 	return count;
 }
 
-uint16 mobdb_searchname_array(const char *str, uint16 * out, uint16 size)
+int mobdb_searchname_array(const char *str, uint16 * out, int size)
 {
 	return mobdb_searchname_array_(str, out, size, false);
 }
@@ -453,7 +450,6 @@ int mob_parse_dataset(struct spawn_data *data)
 struct mob_data* mob_spawn_dataset(struct spawn_data *data)
 {
 	struct mob_data *md = (struct mob_data*)aCalloc(1, sizeof(struct mob_data));
-	new(md) mob_data();
 	md->bl.id= npc_get_new_npc_id();
 	md->bl.type = BL_MOB;
 	md->bl.m = data->m;
@@ -538,7 +534,7 @@ int mob_get_random_id(int type, enum e_random_monster_flags flag, int lv)
 bool mob_ksprotected (struct block_list *src, struct block_list *target)
 {
 	struct block_list *s_bl, *t_bl;
-	map_session_data
+	struct map_session_data
 		*sd,    // Source
 		*t_sd;  // Mob Target
 	struct mob_data *md;
@@ -564,17 +560,17 @@ bool mob_ksprotected (struct block_list *src, struct block_list *target)
 
 	do {
 		struct status_change_entry *sce;
-		map_session_data *pl_sd; // Owner
+		struct map_session_data *pl_sd; // Owner
 		struct map_data *mapdata = map_getmapdata(md->bl.m);
 		char output[128];
 		
-		if( mapdata->getMapFlag(MF_ALLOWKS) || mapdata_flag_ks(mapdata) )
+		if( mapdata->flag[MF_ALLOWKS] || mapdata_flag_ks(mapdata) )
 			return false; // Ignores GVG, PVP and AllowKS map flags
 
 		if( md->get_bosstype() == BOSSTYPE_MVP || md->master_id )
 			return false; // MVP, Slaves mobs ignores KS
 
-		if( (sce = md->sc.getSCE(SC_KSPROTECTED)) == nullptr )
+		if( (sce = md->sc.data[SC_KSPROTECTED]) == nullptr )
 			break; // No KS Protected
 
 		if( sd->bl.id == sce->val1 || // Same Owner
@@ -663,7 +659,7 @@ struct mob_data *mob_once_spawn_sub(struct block_list *bl, int16 m, int16 x, int
 /*==========================================
  * Spawn a single mob on the specified coordinates.
  *------------------------------------------*/
-int mob_once_spawn(map_session_data* sd, int16 m, int16 x, int16 y, const char* mobname, int mob_id, int amount, const char* event, unsigned int size, enum mob_ai ai)
+int mob_once_spawn(struct map_session_data* sd, int16 m, int16 x, int16 y, const char* mobname, int mob_id, int amount, const char* event, unsigned int size, enum mob_ai ai)
 {
 	struct mob_data* md = nullptr;
 	int count, lv;
@@ -684,21 +680,20 @@ int mob_once_spawn(map_session_data* sd, int16 m, int16 x, int16 y, const char* 
 		if (mob_id == MOBID_EMPERIUM)
 		{
 			std::shared_ptr<guild_castle> gc = castle_db.mapindex2gc(map_getmapdata(m)->index);
-			auto g = (gc) ? guild_search(gc->guild_id) : nullptr;
+			struct guild* g = (gc) ? guild_search(gc->guild_id) : nullptr;
 			if (gc)
 			{
 				md->guardian_data = (struct guardian_data*)aCalloc(1, sizeof(struct guardian_data));
-				new(md->guardian_data) guardian_data();
 				md->guardian_data->castle = gc;
 				md->guardian_data->number = MAX_GUARDIANS;
 				md->guardian_data->guild_id = gc->guild_id;
 				if (g)
 				{
-					md->guardian_data->emblem_id = g->guild.emblem_id;
-					memcpy(md->guardian_data->guild_name, g->guild.name, NAME_LENGTH);
+					md->guardian_data->emblem_id = g->emblem_id;
+					memcpy(md->guardian_data->guild_name, g->name, NAME_LENGTH);
 				}
-				else if (gc->guild_id) // Guild is not yet available, retry after the configured timespan.
-					add_timer(gettick() + battle_config.mob_respawn_time,mob_spawn_guardian_sub,md->bl.id,md->guardian_data->guild_id);
+				else if (gc->guild_id) //Guild not yet available, retry in 5.
+					add_timer(gettick()+5000,mob_spawn_guardian_sub,md->bl.id,md->guardian_data->guild_id);
 			}
 		}	// end addition [Valaris]
 
@@ -716,7 +711,7 @@ int mob_once_spawn(map_session_data* sd, int16 m, int16 x, int16 y, const char* 
 /*==========================================
  * Spawn mobs in the specified area.
  *------------------------------------------*/
-int mob_once_spawn_area(map_session_data* sd, int16 m, int16 x0, int16 y0, int16 x1, int16 y1, const char* mobname, int mob_id, int amount, const char* event, unsigned int size, enum mob_ai ai)
+int mob_once_spawn_area(struct map_session_data* sd, int16 m, int16 x0, int16 y0, int16 x1, int16 y1, const char* mobname, int mob_id, int amount, const char* event, unsigned int size, enum mob_ai ai)
 {
 	int i, max, id = 0;
 	int lx = -1, ly = -1;
@@ -774,6 +769,7 @@ static TIMER_FUNC(mob_spawn_guardian_sub){
 	//Needed because the guild_data may not be available at guardian spawn time.
 	struct block_list* bl = map_id2bl(id);
 	struct mob_data* md;
+	struct guild* g;
 	int guardup_lv;
 
 	if (bl == nullptr) //It is possible mob was already removed from map when the castle has no owner. [Skotlex]
@@ -787,7 +783,7 @@ static TIMER_FUNC(mob_spawn_guardian_sub){
 
 	md = (struct mob_data*)bl;
 	nullpo_ret(md->guardian_data);
-	auto g = guild_search((int)data);
+	g = guild_search((int)data);
 
 	if (g == nullptr)
 	{	//Liberate castle, if the guild is not found this is an error! [Skotlex]
@@ -807,9 +803,9 @@ static TIMER_FUNC(mob_spawn_guardian_sub){
 		}
 		return 0;
 	}
-	guardup_lv = guild_checkskill(g->guild, GD_GUARDUP);
-	md->guardian_data->emblem_id = g->guild.emblem_id;
-	memcpy(md->guardian_data->guild_name, g->guild.name, NAME_LENGTH);
+	guardup_lv = guild_checkskill(g,GD_GUARDUP);
+	md->guardian_data->emblem_id = g->emblem_id;
+	memcpy(md->guardian_data->guild_name, g->name, NAME_LENGTH);
 	md->guardian_data->guardup_lv = guardup_lv;
 	if( guardup_lv )
 		status_calc_mob(md, SCO_NONE); //Give bonuses.
@@ -823,7 +819,7 @@ int mob_spawn_guardian(const char* mapname, int16 x, int16 y, const char* mobnam
 {
 	struct mob_data *md=nullptr;
 	struct spawn_data data;
-	std::shared_ptr<MapGuild> g = nullptr;
+	struct guild *g=nullptr;
 	int16 m;
 	memset(&data, 0, sizeof(struct spawn_data)); //fixme
 	data.num = 1;
@@ -891,7 +887,6 @@ int mob_spawn_guardian(const char* mapname, int16 x, int16 y, const char* mobnam
 
 	md = mob_spawn_dataset(&data);
 	md->guardian_data = (struct guardian_data*)aCalloc(1, sizeof(struct guardian_data));
-	new (md->guardian_data) guardian_data();
 	md->guardian_data->number = guardian;
 	md->guardian_data->guild_id = gc->guild_id;
 	md->guardian_data->castle = gc;
@@ -912,11 +907,11 @@ int mob_spawn_guardian(const char* mapname, int16 x, int16 y, const char* mobnam
 	}
 	if (g)
 	{
-		md->guardian_data->emblem_id = g->guild.emblem_id;
-		memcpy (md->guardian_data->guild_name, g->guild.name, NAME_LENGTH);
-		md->guardian_data->guardup_lv = guild_checkskill(g->guild,GD_GUARDUP);
+		md->guardian_data->emblem_id = g->emblem_id;
+		memcpy (md->guardian_data->guild_name, g->name, NAME_LENGTH);
+		md->guardian_data->guardup_lv = guild_checkskill(g,GD_GUARDUP);
 	} else if (md->guardian_data->guild_id)
-		add_timer(gettick() + battle_config.mob_respawn_time,mob_spawn_guardian_sub,md->bl.id,md->guardian_data->guild_id);
+		add_timer(gettick()+5000,mob_spawn_guardian_sub,md->bl.id,md->guardian_data->guild_id);
 	mob_spawn(md);
 
 	return md->bl.id;
@@ -968,30 +963,29 @@ int mob_spawn_bg(const char* mapname, int16 x, int16 y, const char* mobname, int
 }
 
 /*==========================================
- * Returns true if a mob is currently chasing something
- * based on its skillstate.
- * Chase states: MSS_LOOT, MSS_RUSH, MSS_FOLLOW
+ * Reachability to a Specification ID existence place
+ * state indicates type of 'seek' mob should do:
+ * - MSS_LOOT: Looking for item, path must be easy.
+ * - MSS_RUSH: Chasing attacking player, path is complex
+ * - MSS_FOLLOW: Initiative/support seek, path is complex
  *------------------------------------------*/
-bool mob_is_chasing(int state)
+int mob_can_reach(struct mob_data *md,struct block_list *bl,int range, int state)
 {
-	switch (state) {
-		case MSS_LOOT:
-		case MSS_RUSH:
-		case MSS_FOLLOW:
-			return true;
-	}
-	return false;
-}
+	int easy = 0;
 
-/*==========================================
- * Checks if a monster can reach a target by walking
- * Range: Maximum number of cells to be walked
- *------------------------------------------*/
-int mob_can_reach(struct mob_data *md,struct block_list *bl,int range)
-{
 	nullpo_ret(md);
 	nullpo_ret(bl);
-	return unit_can_reach_bl(&md->bl, bl, range, 0, NULL, NULL);
+	switch (state) {
+		case MSS_RUSH:
+		case MSS_FOLLOW:
+			easy = 0; //(battle_config.mob_ai&0x1?0:1);
+			break;
+		case MSS_LOOT:
+		default:
+			easy = 1;
+			break;
+	}
+	return unit_can_reach_bl(&md->bl, bl, range, easy, NULL, NULL);
 }
 
 /*==========================================
@@ -1010,11 +1004,11 @@ int mob_linksearch(struct block_list *bl,va_list ap)
 	target = va_arg(ap, struct block_list *);
 	tick=va_arg(ap, t_tick);
 
-	if (md->mob_id == mob_id && status_has_mode(&md->status,MD_ASSIST) && DIFF_TICK(tick, md->last_linktime) >= MIN_MOBLINKTIME
+	if (md->mob_id == mob_id && status_has_mode(&md->status,MD_ASSIST) && DIFF_TICK(md->last_linktime, tick) < MIN_MOBLINKTIME
 		&& !md->target_id)
 	{
 		md->last_linktime = tick;
-		if( mob_can_reach(md,target,md->db->range2) ){	// Reachability judging
+		if( mob_can_reach(md,target,md->db->range2, MSS_FOLLOW) ){	// Reachability judging
 			md->target_id = target->id;
 			md->min_chase=md->db->range3;
 			return 1;
@@ -1075,7 +1069,8 @@ int mob_setdelayspawn(struct mob_data *md)
 		spawntime = spawntime/100*battle_config.mob_spawn_delay;
 	}
 
-	spawntime = u32max(1000, spawntime); //Monsters should never respawn faster than 1 second
+	if (spawntime < 5000) //Monsters should never respawn faster than within 5 seconds
+		spawntime = 5000;
 
 	if( md->spawn_timer != INVALID_TIMER )
 		delete_timer(md->spawn_timer, mob_delayspawn);
@@ -1127,7 +1122,7 @@ int mob_spawn (struct mob_data *md)
 			{ // retry again later
 				if( md->spawn_timer != INVALID_TIMER )
 					delete_timer(md->spawn_timer, mob_delayspawn);
-				md->spawn_timer = add_timer(tick + battle_config.mob_respawn_time,mob_delayspawn,md->bl.id,0);
+				md->spawn_timer = add_timer(tick+5000,mob_delayspawn,md->bl.id,0);
 				return 1;
 			}
 		}
@@ -1135,7 +1130,7 @@ int mob_spawn (struct mob_data *md)
 		{ // retry again later (players on sight)
 			if( md->spawn_timer != INVALID_TIMER )
 				delete_timer(md->spawn_timer, mob_delayspawn);
-			md->spawn_timer = add_timer(tick + battle_config.mob_respawn_time,mob_delayspawn,md->bl.id,0);
+			md->spawn_timer = add_timer(tick+5000,mob_delayspawn,md->bl.id,0);
 			return 1;
 		}
 	}
@@ -1159,7 +1154,6 @@ int mob_spawn (struct mob_data *md)
 
 	md->state.aggressive = status_has_mode(&md->status,MD_ANGRY)?1:0;
 	md->state.skillstate = MSS_IDLE;
-	md->ud.state.blockedmove = false;
 	md->next_walktime = tick+rnd()%1000+MIN_RANDOMWALKTIME;
 	md->last_linktime = tick;
 	md->dmgtick = tick - 5000;
@@ -1252,7 +1246,9 @@ int mob_target(struct mob_data *md,struct block_list *bl,int dist)
 	// When an angry monster is provoked, it will switch to retaliate AI
 	if (md->state.provoke_flag && md->state.aggressive)
 		md->state.aggressive = 0;
-	md->min_chase = cap_value(dist + md->db->range3 - md->status.rhw.range, md->db->range3, MAX_MINCHASE);
+	md->min_chase=dist+md->db->range3;
+	if(md->min_chase>MAX_MINCHASE)
+		md->min_chase=MAX_MINCHASE;
 	return 0;
 }
 
@@ -1308,7 +1304,9 @@ static int mob_ai_sub_hard_activesearch(struct block_list *bl,va_list ap)
 #endif
 			(*target) = bl;
 			md->target_id=bl->id;
-			md->min_chase = cap_value(dist + md->db->range3 - md->status.rhw.range, md->db->range3, MAX_MINCHASE);
+			md->min_chase= dist + md->db->range3;
+			if(md->min_chase>MAX_MINCHASE)
+				md->min_chase=MAX_MINCHASE;
 			return 1;
 		}
 		break;
@@ -1373,7 +1371,7 @@ static int mob_ai_sub_hard_lootsearch(struct block_list *bl,va_list ap)
 	target = va_arg(ap,struct block_list**);
 
 	dist = distance_bl(&md->bl, bl);
-	if (mob_can_reach(md, bl, md->db->range3) && (
+	if (mob_can_reach(md,bl,dist+1, MSS_LOOT) && (
 		(*target) == nullptr ||
 		(battle_config.monster_loot_search_type && md->target_id > bl->id) ||
 		(!battle_config.monster_loot_search_type && !check_distance_bl(&md->bl, *target, dist)) // New target closer than previous one.
@@ -1439,7 +1437,7 @@ static int mob_ai_sub_hard_slavemob(struct mob_data *md,t_tick tick)
 		// Distance with between slave and master is measured.
 		md->master_dist = distance_bl(&md->bl, bl);
 
-		if (battle_config.slave_stick_with_master || md->special_state.ai == AI_ABR || md->special_state.ai == AI_BIONIC) {
+		if (battle_config.slave_stick_with_master) {
 			// Since the master was in near immediately before, teleport is carried out and it pursues.
 			if (bl->m != md->bl.m || (old_dist < 10 && md->master_dist > 18) || md->master_dist > MAX_MINCHASE) {
 				md->master_dist = 0;
@@ -1472,7 +1470,7 @@ static int mob_ai_sub_hard_slavemob(struct mob_data *md,t_tick tick)
 	}
 
 	//Avoid attempting to lock the master's target too often to avoid unnecessary overload. [Skotlex]
-	if (DIFF_TICK(tick, md->last_linktime) >= MIN_MOBLINKTIME && !md->target_id)
+	if (DIFF_TICK(md->last_linktime, tick) < MIN_MOBLINKTIME && !md->target_id)
   	{
 		struct unit_data *ud = unit_bl2ud(bl);
 		md->last_linktime = tick;
@@ -1491,7 +1489,9 @@ static int mob_ai_sub_hard_slavemob(struct mob_data *md,t_tick tick)
 			}
 			if (tbl && status_check_skilluse(&md->bl, tbl, 0, 0)) {
 				md->target_id=tbl->id;
-				md->min_chase = cap_value(distance_bl(&md->bl, tbl) + md->db->range3 - md->status.rhw.range, md->db->range3, MAX_MINCHASE);
+				md->min_chase=md->db->range3+distance_bl(&md->bl, tbl);
+				if(md->min_chase>MAX_MINCHASE)
+					md->min_chase=MAX_MINCHASE;
 				return 1;
 			}
 		}
@@ -1508,9 +1508,6 @@ static int mob_ai_sub_hard_slavemob(struct mob_data *md,t_tick tick)
 int mob_unlocktarget(struct mob_data *md, t_tick tick)
 {
 	nullpo_ret(md);
-
-	// Remember if the monster was in a "chasing" state
-	bool chasestate = mob_is_chasing(md->state.skillstate);
 
 	switch (md->state.skillstate) {
 	case MSS_WALK:
@@ -1552,7 +1549,7 @@ int mob_unlocktarget(struct mob_data *md, t_tick tick)
 	}
 	
 	if (!md->ud.state.ignore_cell_stack_limit && battle_config.official_cell_stack_limit > 0
-		&& (chasestate || battle_config.mob_ai & 0x8)
+		&& (md->min_chase == md->db->range3 || battle_config.mob_ai & 0x8)
 		&& map_count_oncell(md->bl.m, md->bl.x, md->bl.y, BL_CHAR | BL_NPC, 1) > battle_config.official_cell_stack_limit) {
 		unit_walktoxy(&md->bl, md->bl.x, md->bl.y, 8);
 	}
@@ -1569,12 +1566,6 @@ int mob_randomwalk(struct mob_data *md,t_tick tick)
 	int speed;
 
 	nullpo_ret(md);
-
-	// Initialize next_walktime
-	if (md->next_walktime == INVALID_TIMER) {
-		md->next_walktime = tick+rnd()%1000+MIN_RANDOMWALKTIME;
-		return 1;
-	}
 
 	if(DIFF_TICK(md->next_walktime,tick)>0 ||
 	   status_has_mode(&md->status,MD_NORANDOMWALK) ||
@@ -1698,10 +1689,6 @@ static bool mob_ai_sub_hard(struct mob_data *md, t_tick tick)
 	if(md->bl.prev == nullptr || md->status.hp == 0)
 		return false;
 
-	// Monsters force-walked by script commands should not be searching for targets.
-	if (md->ud.state.force_walk)
-		return false;
-
 	if (DIFF_TICK(tick, md->last_thinktime) < MIN_MOBTHINKTIME)
 		return false;
 
@@ -1711,12 +1698,13 @@ static bool mob_ai_sub_hard(struct mob_data *md, t_tick tick)
 		return false;
 
 	// Abnormalities
-	if(( md->sc.opt1 && md->sc.opt1 != OPT1_STONEWAIT && md->sc.opt1 != OPT1_BURNING ) || status_db.hasSCF(&md->sc, SCF_MOBLOSETARGET)) {//Should reset targets.
+	if(( md->sc.opt1 > 0 && md->sc.opt1 != OPT1_STONEWAIT && md->sc.opt1 != OPT1_BURNING )
+	   || md->sc.data[SC_BLADESTOP] || md->sc.data[SC__MANHOLE] || md->sc.data[SC_CURSEDCIRCLE_TARGET]) {//Should reset targets.
 		md->target_id = md->attacked_id = md->norm_attacked_id = 0;
 		return false;
 	}
 
-	if (md->sc.count && md->sc.getSCE(SC_BLIND))
+	if (md->sc.count && md->sc.data[SC_BLIND])
 		view_range = 3;
 	else
 		view_range = md->db->range2;
@@ -1751,12 +1739,12 @@ static bool mob_ai_sub_hard(struct mob_data *md, t_tick tick)
 		{	//Rude attacked check.
 			if( !battle_check_range(&md->bl, tbl, md->status.rhw.range)
 			&&  ( //Can't attack back and can't reach back.
-					(!can_move && DIFF_TICK(tick, md->ud.canmove_tick) > 0 && (battle_config.mob_ai&0x2 || md->sc.getSCE(SC_SPIDERWEB)
-						|| md->sc.getSCE(SC_BITE) || md->sc.getSCE(SC_VACUUM_EXTREME) || md->sc.getSCE(SC_THORNSTRAP)
-						|| md->sc.getSCE(SC__MANHOLE) // Not yet confirmed if boss will teleport once it can't reach target.
+					(!can_move && DIFF_TICK(tick, md->ud.canmove_tick) > 0 && (battle_config.mob_ai&0x2 || md->sc.data[SC_SPIDERWEB]
+						|| md->sc.data[SC_BITE] || md->sc.data[SC_VACUUM_EXTREME] || md->sc.data[SC_THORNSTRAP]
+						|| md->sc.data[SC__MANHOLE] // Not yet confirmed if boss will teleport once it can't reach target.
 						|| md->walktoxy_fail_count > 0)
 					)
-					|| !mob_can_reach(md, tbl, md->min_chase)
+					|| !mob_can_reach(md, tbl, md->min_chase, MSS_RUSH)
 				)
 			&&  md->state.attacked_count++ >= RUDE_ATTACKED_COUNT
 			&&  !mobskill_use(md, tick, MSC_RUDEATTACKED) // If can't rude Attack
@@ -1776,12 +1764,12 @@ static bool mob_ai_sub_hard(struct mob_data *md, t_tick tick)
 				|| (battle_config.mob_ai&0x2 && !status_check_skilluse(&md->bl, abl, 0, 0)) // Cannot normal attack back to Attacker
 				|| (!battle_check_range(&md->bl, abl, md->status.rhw.range) // Not on Melee Range and ...
 				&& ( // Reach check
-					(!can_move && DIFF_TICK(tick, md->ud.canmove_tick) > 0 && (battle_config.mob_ai&0x2 || md->sc.getSCE(SC_SPIDERWEB)
-						|| md->sc.getSCE(SC_BITE) || md->sc.getSCE(SC_VACUUM_EXTREME) || md->sc.getSCE(SC_THORNSTRAP)
-						|| md->sc.getSCE(SC__MANHOLE) // Not yet confirmed if boss will teleport once it can't reach target.
+					(!can_move && DIFF_TICK(tick, md->ud.canmove_tick) > 0 && (battle_config.mob_ai&0x2 || md->sc.data[SC_SPIDERWEB]
+						|| md->sc.data[SC_BITE] || md->sc.data[SC_VACUUM_EXTREME] || md->sc.data[SC_THORNSTRAP]
+						|| md->sc.data[SC__MANHOLE] // Not yet confirmed if boss will teleport once it can't reach target.
 						|| md->walktoxy_fail_count > 0)
 					)
-					|| !mob_can_reach(md, abl, dist+md->db->range3)
+					|| !mob_can_reach(md, abl, dist+md->db->range3, MSS_RUSH)
 				   )
 				) )
 			{ // Rude attacked
@@ -1806,7 +1794,9 @@ static bool mob_ai_sub_hard(struct mob_data *md, t_tick tick)
 				md->target_id = md->attacked_id; // set target
 				if (md->state.attacked_count)
 					md->state.attacked_count--; //Should we reset rude attack count?
-				md->min_chase = cap_value(dist + md->db->range3 - md->status.rhw.range, md->db->range3, MAX_MINCHASE);
+				md->min_chase = dist+md->db->range3;
+				if(md->min_chase>MAX_MINCHASE)
+					md->min_chase=MAX_MINCHASE;
 				tbl = abl; //Set the new target
 			}
 		}
@@ -1881,7 +1871,7 @@ static bool mob_ai_sub_hard(struct mob_data *md, t_tick tick)
 			if (!can_move) //Stuck. Wait before walking.
 				return true;
 			md->state.skillstate = MSS_LOOT;
-			if (!unit_walktobl(&md->bl, tbl, 0, 0))
+			if (!unit_walktobl(&md->bl, tbl, 0, 1))
 				mob_unlocktarget(md, tick); //Can't loot...
 			return true;
 		}
@@ -1955,8 +1945,7 @@ static bool mob_ai_sub_hard(struct mob_data *md, t_tick tick)
 		return true;
 
 	//Only update target cell / drop target after having moved at least "mob_chase_refresh" cells
-	if(md->ud.walktimer != INVALID_TIMER && (!can_move || md->ud.walkpath.path_pos <= battle_config.mob_chase_refresh)
-		&& mob_is_chasing(md->state.skillstate))
+	if(md->ud.walktimer != INVALID_TIMER && (!can_move || md->ud.walkpath.path_pos <= battle_config.mob_chase_refresh))
 		return true;
 
 	//Out of range...
@@ -1979,7 +1968,7 @@ static bool mob_ai_sub_hard(struct mob_data *md, t_tick tick)
 
 	//Follow up if possible.
 	//Hint: Chase skills are handled in the walktobl routine
-	if(!mob_can_reach(md, tbl, md->min_chase) ||
+	if(!mob_can_reach(md, tbl, md->min_chase, MSS_RUSH) ||
 		!unit_walktobl(&md->bl, tbl, md->status.rhw.range, 2))
 		mob_unlocktarget(md,tick);
 
@@ -2002,7 +1991,7 @@ static int mob_ai_sub_hard_timer(struct block_list *bl,va_list ap)
 /*==========================================
  * Serious processing for mob in PC field of view (foreachclient)
  *------------------------------------------*/
-static int mob_ai_sub_foreachclient(map_session_data *sd,va_list ap)
+static int mob_ai_sub_foreachclient(struct map_session_data *sd,va_list ap)
 {
 	t_tick tick=va_arg(ap,t_tick);
 	map_foreachinallrange(mob_ai_sub_hard_timer,&sd->bl, AREA_SIZE+ACTIVE_AI_RANGE, BL_MOB, sd->status.char_id, tick);
@@ -2019,10 +2008,6 @@ static int mob_ai_sub_lazy(struct mob_data *md, va_list args)
 
 	if(md->bl.prev == NULL)
 		return 0;
-
-	// Monsters force-walked by script commands should not be searching for targets.
-	if (md->ud.state.force_walk)
-		return false;
 
 	t_tick tick = va_arg(args,t_tick);
 
@@ -2118,6 +2103,17 @@ static TIMER_FUNC(mob_ai_hard){
 }
 
 /**
+ * Assign random option values to an item
+ * @param item_option: Random option on the item
+ * @param option: Options to assign
+ */
+void mob_setitem_option(s_item_randomoption &item_option, const std::shared_ptr<s_random_opt_group_entry> &option) {
+	item_option.id = option->id;
+	item_option.value = rnd_value(option->min_value, option->max_value);
+	item_option.param = option->param;
+}
+
+/**
  * Set random option for item when dropped from monster
  * @param item: Item data
  * @param mobdrop: Drop data
@@ -2130,7 +2126,40 @@ void mob_setdropitem_option(item *item, s_mob_drop *mobdrop) {
 	std::shared_ptr<s_random_opt_group> group = random_option_group.find(mobdrop->randomopt_group);
 
 	if (group != nullptr) {
-		group->apply( *item );
+		// Apply Must options
+		for (size_t i = 0; i < group->slots.size(); i++) {
+			// Try to apply an entry
+			for (size_t j = 0, max = group->slots[static_cast<uint16>(i)].size() * 3; j < max; j++) {
+				std::shared_ptr<s_random_opt_group_entry> option = util::vector_random(group->slots[static_cast<uint16>(i)]);
+
+				if (rnd() % 10000 < option->chance) {
+					mob_setitem_option(item->option[i], option);
+					break;
+				}
+			}
+
+			// If no entry was applied, assign one
+			if (item->option[i].id == 0) {
+				std::shared_ptr<s_random_opt_group_entry> option = util::vector_random(group->slots[static_cast<uint16>(i)]);
+
+				// Apply an entry without checking the chance
+				mob_setitem_option(item->option[i], option);
+			}
+		}
+
+		// Apply Random options (if available)
+		if (group->max_random > 0) {
+			for (size_t i = 0; i < min(group->max_random, MAX_ITEM_RDM_OPT); i++) {
+				// If item already has an option in this slot, skip it
+				if (item->option[i].id > 0)
+					continue;
+
+				std::shared_ptr<s_random_opt_group_entry> option = util::vector_random(group->random_options);
+
+				if (rnd() % 10000 < option->chance)
+					mob_setitem_option(item->option[i], option);
+			}
+		}
 	}
 }
 
@@ -2304,7 +2333,7 @@ void mob_log_damage(struct mob_data *md, struct block_list *src, int damage)
 	{
 		case BL_PC:
 		{
-			map_session_data *sd = (TBL_PC*)src;
+			struct map_session_data *sd = (TBL_PC*)src;
 			char_id = sd->status.char_id;
 			if( damage )
 				md->attacked_id = src->id;
@@ -2346,7 +2375,7 @@ void mob_log_damage(struct mob_data *md, struct block_list *src, int damage)
 			struct mob_data* md2 = (TBL_MOB*)src;
 			if( md2->special_state.ai && md2->master_id )
 			{
-				map_session_data* msd = map_id2sd(md2->master_id);
+				struct map_session_data* msd = map_id2sd(md2->master_id);
 				if( msd )
 					char_id = msd->status.char_id;
 			}
@@ -2417,7 +2446,9 @@ void mob_log_damage(struct mob_data *md, struct block_list *src, int damage)
 void mob_damage(struct mob_data *md, struct block_list *src, int damage)
 {
 	if( src != nullptr && md->special_state.ai == AI_SPHERE && !md->dmglog[0].id ) {//LOne WOlf explained that ANYONE can trigger the marine countdown skill. [Skotlex]
-		md->state.can_escape = 1;
+		md->state.alchemist = 1;
+		mobskill_use(md, gettick(), MSC_ALCHEMIST);
+		unit_escape(&md->bl, src, 7, 2);
 	}
 
 	if (src && damage > 0) { //Store total damage...
@@ -2442,11 +2473,8 @@ void mob_damage(struct mob_data *md, struct block_list *src, int damage)
 #if PACKETVER >= 20120404
 	if (battle_config.monster_hp_bars_info && !map_getmapflag(md->bl.m, MF_HIDEMOBHPBAR)) {
 		int i;
-		if (md->special_state.ai == AI_ABR || md->special_state.ai == AI_BIONIC) {
-			clif_summon_hp_bar(*md);
-		}
 		for(i = 0; i < DAMAGELOG_SIZE; i++){ // must show hp bar to all char who already hit the mob.
-			map_session_data *sd = map_charid2sd(md->dmglog[i].id);
+			struct map_session_data *sd = map_charid2sd(md->dmglog[i].id);
 			if( sd && check_distance_bl(&md->bl, &sd->bl, AREA_SIZE) ) // check if in range
 				clif_monster_hp_bar(md, sd->fd);
 		}
@@ -2462,15 +2490,14 @@ void mob_damage(struct mob_data *md, struct block_list *src, int damage)
  * @param drop_modifier: RENEWAL_DROP level modifier
  * @return Modified drop rate
  */
-int mob_getdroprate(struct block_list *src, std::shared_ptr<s_mob_db> mob, int base_rate, int drop_modifier, mob_data* md)
+int mob_getdroprate(struct block_list *src, std::shared_ptr<s_mob_db> mob, int base_rate, int drop_modifier)
 {
 	int drop_rate = base_rate;
 
-	if (md && battle_config.mob_size_influence) {  // Change drops depending on monsters size [Valaris]
-		unsigned int mob_size = md->special_state.size;
-		if (mob_size == SZ_MEDIUM && drop_rate >= 2)
+	if (battle_config.mob_size_influence) { // Change drops depending on monsters size [Valaris]
+		if (mob->status.size == SZ_MEDIUM && drop_rate >= 2)
 			drop_rate /= 2; // SZ_MEDIUM actually is small size modification... this is not a bug!
-		else if (mob_size == SZ_BIG)
+		else if (mob->status.size == SZ_BIG)
 			drop_rate *= 2;
 	}
 
@@ -2481,7 +2508,7 @@ int mob_getdroprate(struct block_list *src, std::shared_ptr<s_mob_db> mob, int b
 			drop_rate += (int)(0.5 + drop_rate * status_get_luk(src) * battle_config.drops_by_luk2 / 10000.);
 
 		if (src->type == BL_PC) { // Player specific drop rate adjustments
-			map_session_data *sd = (map_session_data*)src;
+			struct map_session_data *sd = (struct map_session_data*)src;
 			int drop_rate_bonus = 100;
 
 			// In PK mode players get an additional drop chance bonus of 25% if there is a 20 level difference
@@ -2493,8 +2520,8 @@ int mob_getdroprate(struct block_list *src, std::shared_ptr<s_mob_db> mob, int b
 			drop_rate_bonus += sd->indexed_bonus.dropaddclass[mob->status.class_] + sd->indexed_bonus.dropaddclass[CLASS_ALL];
 			drop_rate_bonus += sd->indexed_bonus.dropaddrace[mob->status.race] + sd->indexed_bonus.dropaddrace[RC_ALL];
 
-			if (sd->sc.getSCE(SC_ITEMBOOST))
-				drop_rate_bonus += sd->sc.getSCE(SC_ITEMBOOST)->val1;
+			if (sd->sc.data[SC_ITEMBOOST])
+				drop_rate_bonus += sd->sc.data[SC_ITEMBOOST]->val1;
 
 			int cap;
 
@@ -2539,8 +2566,8 @@ int mob_getdroprate(struct block_list *src, std::shared_ptr<s_mob_db> mob, int b
 int mob_dead(struct mob_data *md, struct block_list *src, int type)
 {
 	struct status_data *status;
-	map_session_data *sd = NULL, *tmpsd[DAMAGELOG_SIZE];
-	map_session_data *mvp_sd = NULL, *second_sd = NULL, *third_sd = NULL;
+	struct map_session_data *sd = NULL, *tmpsd[DAMAGELOG_SIZE];
+	struct map_session_data *mvp_sd = NULL, *second_sd = NULL, *third_sd = NULL;
 
 	struct {
 		struct party_data *p;
@@ -2557,7 +2584,7 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 	status = &md->status;
 
 	if( src && src->type == BL_PC ) {
-		sd = (map_session_data *)src;
+		sd = (struct map_session_data *)src;
 		mvp_sd = sd;
 	}
 
@@ -2581,7 +2608,7 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 	// filter out entries not eligible for exp distribution
 	memset(tmpsd,0,sizeof(tmpsd));
 	for(i = 0, count = 0, mvp_damage = 0; i < DAMAGELOG_SIZE && md->dmglog[i].id; i++) {
-		map_session_data* tsd = NULL;
+		struct map_session_data* tsd = NULL;
 		if (md->dmglog[i].flag == MDLF_SELF) {
 			//Self damage counts as exp tap
 			count++;
@@ -2625,7 +2652,7 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 		//TODO: Determine if this should go before calculating the MVP player instead of after.
 		if (UINT_MAX - md->dmglog[0].dmg > md->tdmg) {
 			md->tdmg += md->dmglog[0].dmg;
-			md->dmglog[0].dmg *= 2;
+			md->dmglog[0].dmg<<=1;
 		} else {
 			md->dmglog[0].dmg+= UINT_MAX - md->tdmg;
 			md->tdmg = UINT_MAX;
@@ -2640,15 +2667,15 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 		int bonus = 100; //Bonus on top of your share (common to all attackers).
 		int pnum = 0;
 #ifndef RENEWAL
-		if (md->sc.getSCE(SC_RICHMANKIM))
-			bonus += md->sc.getSCE(SC_RICHMANKIM)->val2;
+		if (md->sc.data[SC_RICHMANKIM])
+			bonus += md->sc.data[SC_RICHMANKIM]->val2;
 #else
-		if (sd && sd->sc.getSCE(SC_RICHMANKIM))
-			bonus += sd->sc.getSCE(SC_RICHMANKIM)->val2;
+		if (sd && sd->sc.data[SC_RICHMANKIM])
+			bonus += sd->sc.data[SC_RICHMANKIM]->val2;
 #endif
 		if(sd) {
 			temp = status_get_class(&md->bl);
-			if(sd->sc.getSCE(SC_MIRACLE)) i = 2; //All mobs are Star Targets
+			if(sd->sc.data[SC_MIRACLE]) i = 2; //All mobs are Star Targets
 			else
 			ARR_FIND(0, MAX_PC_FEELHATE, i, temp == sd->hate_mob[i] &&
 				(battle_config.allow_skill_without_day || sg_info[i].day_func()));
@@ -2674,8 +2701,6 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 				if (per > 2) per = 2; // prevents unlimited exp gain
 			}
 
-			//Exclude rebirth tap from this calculation
-			count -= md->state.rebirth;
 			if (count>1 && battle_config.exp_bonus_attacker) {
 				//Exp bonus per additional attacker.
 				if (count > battle_config.exp_bonus_max_attacker)
@@ -2774,7 +2799,7 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 					}
 				}
 				if(zeny) // zeny from mobs [Valaris]
-					pc_getzeny(tmpsd[i], zeny, LOG_TYPE_PICKDROP_MONSTER);
+					pc_getzeny(tmpsd[i], zeny, LOG_TYPE_PICKDROP_MONSTER, NULL);
 			}
 
 			if( md->get_bosstype() == BOSSTYPE_MVP )
@@ -2794,6 +2819,7 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 	{ // Item Drop
 		struct item_drop_list *dlist = ers_alloc(item_drop_list_ers, struct item_drop_list);
 		struct item_drop *ditem;
+		struct item_data* it = NULL;
 		int drop_rate, drop_modifier = 100;
 
 #ifdef RENEWAL_DROP
@@ -2810,13 +2836,10 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 		for (i = 0; i < MAX_MOB_DROP_TOTAL; i++) {
 			if (md->db->dropitem[i].nameid == 0)
 				continue;
-
-			std::shared_ptr<item_data> it = item_db.find(md->db->dropitem[i].nameid);
-
-			if ( it == nullptr )
+			if ( !(it = itemdb_exists(md->db->dropitem[i].nameid)) )
 				continue;
 			
-			drop_rate = mob_getdroprate(src, md->db, md->db->dropitem[i].rate, drop_modifier, md);
+			drop_rate = mob_getdroprate(src, md->db, md->db->dropitem[i].rate, drop_modifier);
 
 			// attempt to drop the item
 			if (rnd() % 10000 >= drop_rate)
@@ -2843,7 +2866,8 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 
 		// Ore Discovery [Celest]
 		if (sd == mvp_sd && pc_checkskill(sd,BS_FINDINGORE)>0 && battle_config.finding_ore_rate/10 >= rnd()%10000) {
-			struct s_mob_drop mobdrop = {};
+			struct s_mob_drop mobdrop;
+			memset(&mobdrop, 0, sizeof(struct s_mob_drop));
 			mobdrop.nameid = itemdb_group.get_random_item_id(IG_FINDINGORE,1);
 			ditem = mob_setdropitem(&mobdrop, 1, md->mob_id);
 			mob_item_drop(md, dlist, ditem, 0, battle_config.finding_ore_rate/10, homkillonly || merckillonly);
@@ -2854,6 +2878,7 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 			t_itemid dropid = 0;
 
 			for (const auto &it : sd->add_drop) {
+				struct s_mob_drop mobdrop;
 				if (!&it || (!it.nameid && !it.group))
 					continue;
 				if ((it.race < RC_NONE_ && it.race == -md->mob_id) || //Race < RC_NONE_, use mob_id
@@ -2874,7 +2899,7 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 					if (rnd()%10000 >= drop_rate)
 						continue;
 					dropid = (it.nameid > 0) ? it.nameid : itemdb_group.get_random_item_id(it.group,1);
-					struct s_mob_drop mobdrop = {};
+					memset(&mobdrop, 0, sizeof(struct s_mob_drop));
 					mobdrop.nameid = dropid;
 
 					mob_item_drop(md, dlist, mob_setdropitem(&mobdrop,1,md->mob_id), 0, drop_rate, homkillonly || merckillonly);
@@ -2885,7 +2910,7 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 			if( sd->bonus.get_zeny_num && rnd()%100 < sd->bonus.get_zeny_rate ) {
 				i = sd->bonus.get_zeny_num > 0 ? sd->bonus.get_zeny_num : -md->level * sd->bonus.get_zeny_num;
 				if (!i) i = 1;
-				pc_getzeny(sd, 1+rnd()%i, LOG_TYPE_PICKDROP_MONSTER);
+				pc_getzeny(sd, 1+rnd()%i, LOG_TYPE_PICKDROP_MONSTER, NULL);
 			}
 		}
 
@@ -2894,41 +2919,6 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 			for (i = 0; i < md->lootitem_count; i++)
 				mob_item_drop(md, dlist, mob_setlootitem(&md->lootitems[i], md->mob_id), 1, 10000, homkillonly || merckillonly);
 		}
-
-		// Process map specific drops
-		std::shared_ptr<s_map_drops> mapdrops;
-
-		// If it is an instance map, we check for map specific drops of the original map
-		if( map[md->bl.m].instance_id > 0 ){
-			mapdrops = map_drop_db.find( map[md->bl.m].instance_src_map );
-		}else{
-			mapdrops = map_drop_db.find( md->bl.m );
-		}
-
-		if( mapdrops != nullptr ){
-			// Process map wide drops
-			for( const auto& it : mapdrops->globals ){
-				if( rnd_chance( it.second->rate, 100000u ) ){
-					// 'Cheat' for autoloot command: rate is changed from n/100000 to n/10000
-					int32 map_drops_rate = max(1, (it.second->rate / 10));
-					mob_item_drop( md, dlist, mob_setdropitem( it.second.get(), 1, md->mob_id ), 0, map_drops_rate, (homkillonly || merckillonly) );
-				}
-			}
-
-			// Process map drops for this specific mob
-			const auto& specific = mapdrops->specific.find( md->mob_id );
-
-			if( specific != mapdrops->specific.end() ){
-				for( const auto& it : specific->second ){
-					if( rnd_chance( it.second->rate, 100000u ) ){
-						// 'Cheat' for autoloot command: rate is changed from n/100000 to n/10000
-						int32 map_drops_rate = max(1, (it.second->rate / 10));
-						mob_item_drop( md, dlist, mob_setdropitem( it.second.get(), 1, md->mob_id ), 0, map_drops_rate, (homkillonly || merckillonly) );
-					}
-				}
-			}
-		}
-
 		if (dlist->item) //There are drop items.
 			add_timer(tick + (!battle_config.delay_battle_damage?500:0), mob_delay_item_drop, 0, (intptr_t)dlist);
 		else //No drops
@@ -3008,12 +2998,9 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 #endif
 
 			for(i = 0; i < MAX_MVP_DROP_TOTAL; i++) {
-				if(mdrop[i].nameid == 0)
-					continue;
+				struct item_data *i_data;
 
-				std::shared_ptr<item_data> i_data = item_db.find(mdrop[i].nameid);
-
-				if (i_data == nullptr)
+				if(mdrop[i].nameid == 0 || !(i_data = itemdb_exists(mdrop[i].nameid)))
 					continue;
 
 				temp = mdrop[i].rate;
@@ -3069,7 +3056,7 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 		//Emperium destroyed by script. Discard mvp character. [Skotlex]
 		mvp_sd = NULL;
 
-	rebirth =  ( md->sc.getSCE(SC_KAIZEL) || md->sc.getSCE(SC_ULTIMATE_S) || (md->sc.getSCE(SC_REBIRTH) && !md->state.rebirth) );
+	rebirth =  ( md->sc.data[SC_KAIZEL] || (md->sc.data[SC_REBIRTH] && !md->state.rebirth) );
 	if( !rebirth ) { // Only trigger event on final kill
 		if( src ) {
 			switch( src->type ) { //allowed type
@@ -3091,7 +3078,7 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 			{ //TK_MISSION [Skotlex]
 				if (++(sd->mission_count) >= 100 && (temp = mob_get_random_id(MOBG_BRANCH_OF_DEAD_TREE, static_cast<e_random_monster_flags>(RMF_CHECK_MOB_LV|RMF_MOB_NOT_BOSS|RMF_MOB_NOT_SPAWN), sd->status.base_level)))
 				{
-					pc_addfame(*sd, battle_config.fame_taekwon_mission);
+					pc_addfame(sd, battle_config.fame_taekwon_mission);
 					sd->mission_mobid = temp;
 					pc_setglobalreg(sd, add_str(TKMISSIONID_VAR), temp);
 					sd->mission_count = 0;
@@ -3181,9 +3168,9 @@ int mob_dead(struct mob_data *md, struct block_list *src, int type)
 }
 
 /**
- * Resurrects a mob (reset values and respawn on map)
+ * Resurect a mob with x hp (reset value and respawn on map)
  * @param md : mob pointer
- * @param hp : hp to resurrect it with (only used for exp calculation)
+ * @param hp : hp to resurect him with, @FIXME unused atm
  */
 void mob_revive(struct mob_data *md, unsigned int hp)
 {
@@ -3193,9 +3180,7 @@ void mob_revive(struct mob_data *md, unsigned int hp)
 	md->next_walktime = tick+rnd()%1000+MIN_RANDOMWALKTIME;
 	md->last_linktime = tick;
 	md->last_pcneartime = 0;
-	//We reset the damage log and then set the already lost damage as self damage so players don't get exp for it [Playtester]
-	memset(md->dmglog, 0, sizeof(md->dmglog));
-	mob_log_damage(md, &md->bl, md->status.max_hp - hp);
+	memset(md->dmglog, 0, sizeof(md->dmglog));	// Reset the damage done on the rebirthed monster, otherwise will grant full exp + damage done. [Valaris]
 	md->tdmg = 0;
 	if (!md->bl.prev){
 		if(map_addblock(&md->bl))
@@ -3210,6 +3195,7 @@ void mob_revive(struct mob_data *md, unsigned int hp)
 
 int mob_guardian_guildchange(struct mob_data *md)
 {
+	struct guild *g;
 	nullpo_ret(md);
 
 	if (!md->guardian_data)
@@ -3230,7 +3216,7 @@ int mob_guardian_guildchange(struct mob_data *md)
 		return 0;
 	}
 
-	auto g = guild_search(md->guardian_data->castle->guild_id);
+	g = guild_search(md->guardian_data->castle->guild_id);
 	if (g == NULL)
 	{	//Properly remove guardian info from Castle data.
 		ShowError("mob_guardian_guildchange: New Guild (id %d) does not exists!\n", md->guardian_data->guild_id);
@@ -3240,10 +3226,10 @@ int mob_guardian_guildchange(struct mob_data *md)
 		return 0;
 	}
 
-	md->guardian_data->guild_id = g->guild.guild_id;
-	md->guardian_data->emblem_id = g->guild.emblem_id;
-	md->guardian_data->guardup_lv = guild_checkskill(g->guild, GD_GUARDUP);
-	memcpy(md->guardian_data->guild_name, g->guild.name, NAME_LENGTH);
+	md->guardian_data->guild_id = g->guild_id;
+	md->guardian_data->emblem_id = g->emblem_id;
+	md->guardian_data->guardup_lv = guild_checkskill(g,GD_GUARDUP);
+	memcpy(md->guardian_data->guild_name, g->name, NAME_LENGTH);
 
 	return 1;
 }
@@ -3366,8 +3352,8 @@ int mob_class_change (struct mob_data *md, int mob_id)
 	else
 		memcpy(md->name,md->db->jname.c_str(),NAME_LENGTH);
 
-	status_change_end(&md->bl,SC_KEEPING); // End before calling status_calc_mob().
-	status_change_end(&md->bl,SC_BARRIER);
+	status_change_end(&md->bl,SC_KEEPING,INVALID_TIMER); // End before calling status_calc_mob().
+	status_change_end(&md->bl,SC_BARRIER,INVALID_TIMER);
 	mob_stop_attack(md);
 	mob_stop_walking(md, 0);
 	unit_skillcastcancel(&md->bl, 0);
@@ -3410,12 +3396,9 @@ void mob_heal(struct mob_data *md,unsigned int heal)
 #if PACKETVER >= 20120404
 	if (battle_config.monster_hp_bars_info && !map_getmapflag(md->bl.m, MF_HIDEMOBHPBAR)) {
 		int i;
-		if (md->special_state.ai == AI_ABR || md->special_state.ai == AI_BIONIC) {
-			clif_summon_hp_bar(*md);
-		}
 		for(i = 0; i < DAMAGELOG_SIZE; i++)// must show hp bar to all char who already hit the mob.
 			if( md->dmglog[i].id ) {
-				map_session_data *sd = map_charid2sd(md->dmglog[i].id);
+				struct map_session_data *sd = map_charid2sd(md->dmglog[i].id);
 				if( sd && check_distance_bl(&md->bl, &sd->bl, AREA_SIZE) ) // check if in range
 					clif_monster_hp_bar(md, sd->fd);
 			}
@@ -3590,13 +3573,13 @@ int mob_skill_id2skill_idx(int mob_id,uint16 skill_id)
  *------------------------------------------*/
 int mob_getfriendhprate_sub(struct block_list *bl,va_list ap)
 {
-	int64 min_rate, max_rate,rate;
+	int min_rate, max_rate,rate;
 	struct block_list **fr;
 	struct mob_data *md;
 
 	md = va_arg(ap,struct mob_data *);
-	min_rate=va_arg(ap,int64);
-	max_rate=va_arg(ap,int64);
+	min_rate=va_arg(ap,int);
+	max_rate=va_arg(ap,int);
 	fr=va_arg(ap,struct block_list **);
 
 	if( md->bl.id == bl->id && !(battle_config.mob_ai&0x10))
@@ -3614,7 +3597,7 @@ int mob_getfriendhprate_sub(struct block_list *bl,va_list ap)
 		(*fr) = bl;
 	return 1;
 }
-static struct block_list *mob_getfriendhprate(struct mob_data *md,int64 min_rate,int64 max_rate)
+static struct block_list *mob_getfriendhprate(struct mob_data *md,int min_rate,int max_rate)
 {
 	struct block_list *fr=NULL;
 	int type = BL_MOB;
@@ -3630,7 +3613,7 @@ static struct block_list *mob_getfriendhprate(struct mob_data *md,int64 min_rate
 /*==========================================
  * Check hp rate of its master
  *------------------------------------------*/
-struct block_list *mob_getmasterhpltmaxrate(struct mob_data *md,int64 rate)
+struct block_list *mob_getmasterhpltmaxrate(struct mob_data *md,int rate)
 {
 	if( md && md->master_id > 0 )
 	{
@@ -3641,39 +3624,14 @@ struct block_list *mob_getmasterhpltmaxrate(struct mob_data *md,int64 rate)
 
 	return NULL;
 }
-
-bool mob_getstatus_sub( struct mob_data& md, e_mob_skill_condition condition, sc_type type ){
-	bool found = false;
-
-	if( type == SC_NONE ){
-		for( int i = SC_COMMON_MIN; i <= SC_COMMON_MAX; i++ ){
-			if( md.sc.getSCE( i ) != nullptr ){
-				// Once an effect was found, break out. [Skotlex]
-				found = true;
-				break;
-			}
-		}
-	}else{
-		found = md.sc.getSCE( type ) != nullptr;
-	}
-
-	switch( condition ){
-		case MSC_MYSTATUSON:
-		case MSC_FRIENDSTATUSON:
-			return found;
-		case MSC_MYSTATUSOFF:
-		case MSC_FRIENDSTATUSOFF:
-			return !found;
-		default:
-			return false;
-	}
-}
-
 /*==========================================
  * What a status state suits by nearby MOB is looked for.
  *------------------------------------------*/
-int mob_getfriendstatus_sub( struct block_list *bl, va_list ap ){
-	struct mob_data *md, *mmd;
+int mob_getfriendstatus_sub(struct block_list *bl,va_list ap)
+{
+	int cond1,cond2;
+	struct mob_data **fr, *md, *mmd;
+	int flag=0;
 
 	nullpo_ret(bl);
 	nullpo_ret(md=(struct mob_data *)bl);
@@ -3684,19 +3642,24 @@ int mob_getfriendstatus_sub( struct block_list *bl, va_list ap ){
 
 	if (battle_check_target(&mmd->bl,bl,BCT_ENEMY)>0)
 		return 0;
-
-	int64 cond1 = va_arg( ap, int64 );
-	int64 cond2 = va_arg( ap, int64 );
-	struct mob_data** fr = va_arg( ap, struct mob_data** );
-
-	if( mob_getstatus_sub( *md, static_cast<e_mob_skill_condition>( cond1 ), static_cast<sc_type>( cond2 ) ) ){
-		*fr = md;
-	}
+	cond1=va_arg(ap,int);
+	cond2=va_arg(ap,int);
+	fr=va_arg(ap,struct mob_data **);
+	if( cond2==-1 ){
+		int j;
+		for(j=SC_COMMON_MIN;j<=SC_COMMON_MAX && !flag;j++){
+			if ((flag=(md->sc.data[j] != NULL))) //Once an effect was found, break out. [Skotlex]
+				break;
+		}
+	}else
+		flag=( md->sc.data[cond2] != NULL );
+	if( flag^( cond1==MSC_FRIENDSTATUSOFF ) )
+		(*fr)=md;
 
 	return 0;
 }
 
-struct mob_data *mob_getfriendstatus(struct mob_data *md,int64 cond1,int64 cond2)
+struct mob_data *mob_getfriendstatus(struct mob_data *md,int cond1,int cond2)
 {
 	struct mob_data* fr = NULL;
 	nullpo_ret(md);
@@ -3726,7 +3689,7 @@ bool mob_chat_display_message(mob_data &md, uint16 msg_id) {
 /*==========================================
  * Skill use judging
  *------------------------------------------*/
-int mobskill_use(struct mob_data *md, t_tick tick, int event, int64 damage)
+int mobskill_use(struct mob_data *md, t_tick tick, int event)
 {
 	struct block_list *fbl = NULL; //Friend bl, which can either be a BL_PC or BL_MOB depending on the situation. [Skotlex]
 	struct block_list *bl;
@@ -3747,8 +3710,7 @@ int mobskill_use(struct mob_data *md, t_tick tick, int event, int64 damage)
 	//Pick a starting position and loop from that.
 	i = battle_config.mob_ai&0x100?rnd()%ms.size():0;
 	for (n = 0; n < ms.size(); i++, n++) {
-		int64 c2;
-		int flag = 0;
+		int c2, flag = 0;
 
 		if (i == ms.size())
 			i = 0;
@@ -3773,10 +3735,6 @@ int mobskill_use(struct mob_data *md, t_tick tick, int event, int64 damage)
 			flag = 1; //Trigger skill.
 		else if (ms[i]->cond1 == MSC_SKILLUSED)
 			flag = ((event & 0xffff) == MSC_SKILLUSED && ((event >> 16) == c2 || c2 == 0));
-		else if (ms[i]->cond1 == MSC_GROUNDATTACKED && damage > 0)
-			flag = ((event & 0xffff) == MSC_SKILLUSED && skill_get_inf((event >> 16))&INF_GROUND_SKILL);
-		else if (ms[i]->cond1 == MSC_DAMAGEDGT && damage > 0 && !((event & 0xffff) == MSC_SKILLUSED)) //Avoid double check if skill has been used [datawulf]
-			flag = (damage > c2);
 		else if(event == -1){
 			//Avoid entering on defined events to avoid "hyper-active skill use" due to the overflow of calls to this function in battle.
 			switch (ms[i]->cond1)
@@ -3793,14 +3751,16 @@ int mobskill_use(struct mob_data *md, t_tick tick, int event, int64 damage)
 					break;
 				case MSC_MYSTATUSON:		// status[num] on
 				case MSC_MYSTATUSOFF:		// status[num] off
-					if( !md->sc.count ){
+					if (!md->sc.count) {
 						flag = 0;
-					}else if( mob_getstatus_sub( *md, static_cast<e_mob_skill_condition>( ms[i]->cond1 ), static_cast<sc_type>( ms[i]->cond2 ) ) ){
-						flag = 1;
-					}else{
-						flag = 0;
+					} else if (ms[i]->cond2 == -1) {
+						for (j = SC_COMMON_MIN; j <= SC_COMMON_MAX; j++)
+							if ((flag = (md->sc.data[j]!=NULL)) != 0)
+								break;
+					} else {
+						flag = (md->sc.data[ms[i]->cond2]!=NULL);
 					}
-					break;
+					flag ^= (ms[i]->cond1 == MSC_MYSTATUSOFF); break;
 				case MSC_FRIENDHPLTMAXRATE:	// friend HP < maxhp%
 					flag = ((fbl = mob_getfriendhprate(md, 0, ms[i]->cond2)) != NULL); break;
 				case MSC_FRIENDHPINRATE	:
@@ -3827,9 +3787,8 @@ int mobskill_use(struct mob_data *md, t_tick tick, int event, int64 damage)
 				case MSC_MASTERATTACKED:
 					flag = (md->master_id > 0 && (fbl=map_id2bl(md->master_id)) && unit_counttargeted(fbl) > 0); break;
 				case MSC_ALCHEMIST:
-					flag = (md->state.can_escape); break;
-				case MSC_MOBNEARBYGT:
-					flag = (map_foreachinallrange(mob_count_sub, &md->bl, AREA_SIZE, BL_MOB) > c2 ); break;
+					flag = (md->state.alchemist);
+					break;
 			}
 		}
 
@@ -3866,12 +3825,7 @@ int mobskill_use(struct mob_data *md, t_tick tick, int event, int64 damage)
 					bl = &md->bl;
 					break;
 			}
-			if (!bl) {
-				if (battle_config.mob_ai & 0x1000)
-					continue;
-				else
-					break;
-			}
+			if (!bl) continue;
 
 			x = bl->x;
 		  	y = bl->y;
@@ -3888,10 +3842,7 @@ int mobskill_use(struct mob_data *md, t_tick tick, int event, int64 damage)
 				!unit_skilluse_pos2(&md->bl, x, y, ms[i]->skill_id, ms[i]->skill_lv, ms[i]->casttime, ms[i]->cancel))
 			{
 				map_freeblock_unlock();
-				if (battle_config.mob_ai & 0x1000)
-					continue;
-				else
-					break;
+				continue;
 			}
 		} else {
 			//Targetted skill
@@ -3921,12 +3872,7 @@ int mobskill_use(struct mob_data *md, t_tick tick, int event, int64 damage)
 					bl = &md->bl;
 					break;
 			}
-			if (!bl) {
-				if (battle_config.mob_ai & 0x1000)
-					continue;
-				else
-					break;
-			}
+			if (!bl) continue;
 
 			md->skill_idx = i;
 			map_freeblock_lock();
@@ -3934,10 +3880,7 @@ int mobskill_use(struct mob_data *md, t_tick tick, int event, int64 damage)
 				!unit_skilluse_id2(&md->bl, bl->id, ms[i]->skill_id, ms[i]->skill_lv, ms[i]->casttime, ms[i]->cancel))
 			{
 				map_freeblock_unlock();
-				if (battle_config.mob_ai & 0x1000)
-					continue;
-				else
-					break;
+				continue;
 			}
 		}
 		//Skill used. Post-setups...
@@ -3960,7 +3903,7 @@ int mobskill_use(struct mob_data *md, t_tick tick, int event, int64 damage)
 /*==========================================
  * Skill use event processing
  *------------------------------------------*/
-int mobskill_event(struct mob_data *md, struct block_list *src, t_tick tick, int flag, int64 damage)
+int mobskill_event(struct mob_data *md, struct block_list *src, t_tick tick, int flag)
 {
 	int target_id, res = 0;
 
@@ -3974,13 +3917,11 @@ int mobskill_event(struct mob_data *md, struct block_list *src, t_tick tick, int
 	if (flag == -1)
 		res = mobskill_use(md, tick, MSC_CASTTARGETED);
 	else if ((flag&0xffff) == MSC_SKILLUSED)
-		res = mobskill_use(md, tick, flag, damage);
+		res = mobskill_use(md, tick, flag);
 	else if (flag&BF_SHORT)
-		res = mobskill_use(md, tick, MSC_CLOSEDATTACKED, damage);
+		res = mobskill_use(md, tick, MSC_CLOSEDATTACKED);
 	else if (flag&BF_LONG && !(flag&BF_MAGIC)) //Long-attacked should not include magic.
-		res = mobskill_use(md, tick, MSC_LONGRANGEATTACKED, damage);
-	else if (damage > 0) //Trigger for any damage dealt from other attack types without affecting other triggers [datawulf]
-		res = mobskill_use(md, tick, -2, damage);
+		res = mobskill_use(md, tick, MSC_LONGRANGEATTACKED);
 
 	if (!res)
 	//Restore previous target only if skill condition failed to trigger. [Skotlex]
@@ -4022,7 +3963,7 @@ static bool mob_clone_disabled_skills(uint16 skill_id) {
 //If mode is not passed, a default aggressive mode is used.
 //If master_id is passed, clone is attached to him.
 //Returns: ID of newly crafted copy.
-int mob_clone_spawn(map_session_data *sd, int16 m, int16 x, int16 y, const char *event, int master_id, enum e_mode mode, int flag, unsigned int duration)
+int mob_clone_spawn(struct map_session_data *sd, int16 m, int16 x, int16 y, const char *event, int master_id, enum e_mode mode, int flag, unsigned int duration)
 {
 	int mob_id;
 	int inf, fd;
@@ -4054,7 +3995,7 @@ int mob_clone_spawn(map_session_data *sd, int16 m, int16 x, int16 y, const char 
 		status->lhw.atk2= status->dex + status->lhw.atk + status->lhw.atk2; //Max ATK
 		status->lhw.atk = status->dex; //Min ATK
 	}
-	if (mode > MD_NONE) //User provided mode.
+	if (mode) //User provided mode.
 		status->mode = mode;
 	else if (flag&1) //Friendly Character, remove looting.
 		status->mode = static_cast<enum e_mode>(status->mode&(~MD_LOOTER));
@@ -4281,8 +4222,8 @@ const std::string MobDatabase::getDefaultLocation() {
 	return std::string(db_path) + "/mob_db.yml";
 }
 
-bool MobDatabase::parseDropNode(std::string nodeName, const ryml::NodeRef& node, uint8 max, s_mob_drop *drops) {
-	const auto& dropNode = node[c4::to_csubstr(nodeName)];
+bool MobDatabase::parseDropNode(std::string nodeName, YAML::Node node, uint8 max, s_mob_drop *drops) {
+	const YAML::Node &dropNode = node[nodeName];
 	uint16 i;
 
 	// Find first empty spot
@@ -4292,7 +4233,7 @@ bool MobDatabase::parseDropNode(std::string nodeName, const ryml::NodeRef& node,
 		}
 	}
 
-	for (const auto& dropit : dropNode) {
+	for (const YAML::Node &dropit : dropNode) {
 		uint16 index;
 
 		if (this->nodeExists(dropit, "Index")) {
@@ -4358,33 +4299,11 @@ bool MobDatabase::parseDropNode(std::string nodeName, const ryml::NodeRef& node,
 }
 
 /**
- * Mob DB constructor
- */
-s_mob_db::s_mob_db()
-{
-	status.max_hp = 1;
-	status.max_sp = 1;
-	status.str = 1;
-	status.agi = 1;
-	status.vit = 1;
-	status.int_ = 1;
-	status.dex = 1;
-	status.luk = 1;
-	status.ele_lv = 1;
-	status.speed = DEFAULT_WALK_SPEED;
-	status.adelay = cap_value(0, battle_config.monster_max_aspd * 2, 4000);
-	status.amotion = cap_value(0, battle_config.monster_max_aspd, 2000);
-	status.mode = static_cast<e_mode>(MONSTER_TYPE_06);
-
-	vd.class_ = id;
-}
-
-/**
  * Reads and parses an entry from the mob_db.
  * @param node: YAML node containing the entry.
  * @return count of successfully parsed rows
  */
-uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
+uint64 MobDatabase::parseBodyNode(const YAML::Node &node) {
 	uint32 mob_id;
 
 	if (!this->asUInt32(node, "Id", mob_id))
@@ -4447,8 +4366,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 
 		name.resize(NAME_LENGTH);
 		mob->jname = name;
-	} else if (!exists) {
-		mob->jname = mob->name;
+	} else {
+		if (!exists)
+			mob->jname = mob->name;
 	}
 
 	if (this->nodeExists(node, "Level")) {
@@ -4458,6 +4378,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->lv = level;
+	} else {
+		if (!exists)
+			mob->lv = 1;
 	}
 
 	if (this->nodeExists(node, "Hp")) {
@@ -4467,6 +4390,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->status.max_hp = hp;
+	} else {
+		if (!exists)
+			mob->status.max_hp = 1;
 	}
 	
 	if (this->nodeExists(node, "Sp")) {
@@ -4476,6 +4402,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->status.max_sp = sp;
+	} else {
+		if (!exists)
+			mob->status.max_sp = 1;
 	}
 	
 	if (this->nodeExists(node, "BaseExp")) {
@@ -4485,6 +4414,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->base_exp = static_cast<t_exp>(cap_value((double)exp * (double)battle_config.base_exp_rate / 100., 0, MAX_EXP));
+	} else {
+		if (!exists)
+			mob->base_exp = 0;
 	}
 	
 	if (this->nodeExists(node, "JobExp")) {
@@ -4494,6 +4426,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->job_exp = static_cast<t_exp>(cap_value((double)exp * (double)battle_config.job_exp_rate / 100., 0, MAX_EXP));
+	} else {
+		if (!exists)
+			mob->job_exp = 0;
 	}
 	
 	if (this->nodeExists(node, "MvpExp")) {
@@ -4503,6 +4438,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->mexp = static_cast<t_exp>(cap_value((double)exp * (double)battle_config.mvp_exp_rate / 100., 0, MAX_EXP));
+	} else {
+		if (!exists)
+			mob->mexp = 0;
 	}
 
 	if (this->nodeExists(node, "Attack")) {
@@ -4512,6 +4450,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->status.rhw.atk = atk;
+	} else {
+		if (!exists)
+			mob->status.rhw.atk = 0;
 	}
 	
 	if (this->nodeExists(node, "Attack2")) {
@@ -4524,6 +4465,13 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 		mob->status.rhw.matk = atk;
 #else
 		mob->status.rhw.atk2 = atk;
+#endif
+	} else {
+		if (!exists)
+#ifdef RENEWAL
+			mob->status.rhw.matk = 0;
+#else
+			mob->status.rhw.atk2 = 0;
 #endif
 	}
 
@@ -4539,6 +4487,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 		}
 
 		mob->status.def = static_cast<defType>(def);
+	} else {
+		if (!exists)
+			mob->status.def = 0;
 	}
 
 	if (this->nodeExists(node, "MagicDefense")) {
@@ -4553,24 +4504,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 		}
 
 		mob->status.mdef = static_cast<defType>(def);
-	}
-
-	if (this->nodeExists(node, "Resistance")) {
-		uint16 res;
-
-		if (!this->asUInt16(node, "Resistance", res))
-			return 0;
-
-		mob->status.res = res;
-	}
-
-	if (this->nodeExists(node, "MagicResistance")) {
-		uint16 mres;
-
-		if (!this->asUInt16(node, "MagicResistance", mres))
-			return 0;
-
-		mob->status.mres = mres;
+	} else {
+		if (!exists)
+			mob->status.mdef = 0;
 	}
 
 	if (this->nodeExists(node, "Str")) {
@@ -4580,6 +4516,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->status.str = max(1, stat);
+	} else {
+		if (!exists)
+			mob->status.str = 1;
 	}
 
 	if (this->nodeExists(node, "Agi")) {
@@ -4589,6 +4528,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->status.agi = max(1, stat);
+	} else {
+		if (!exists)
+			mob->status.agi = 1;
 	}
 
 	if (this->nodeExists(node, "Vit")) {
@@ -4598,6 +4540,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->status.vit = max(1, stat);
+	} else {
+		if (!exists)
+			mob->status.vit = 1;
 	}
 
 	if (this->nodeExists(node, "Int")) {
@@ -4607,6 +4552,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->status.int_ = max(1, stat);
+	} else {
+		if (!exists)
+			mob->status.int_ = 1;
 	}
 
 	if (this->nodeExists(node, "Dex")) {
@@ -4616,6 +4564,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->status.dex = max(1, stat);
+	} else {
+		if (!exists)
+			mob->status.dex = 1;
 	}
 
 	if (this->nodeExists(node, "Luk")) {
@@ -4625,6 +4576,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->status.luk = max(1, stat);
+	} else {
+		if (!exists)
+			mob->status.luk = 1;
 	}
 
 	if (this->nodeExists(node, "AttackRange")) {
@@ -4634,6 +4588,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->status.rhw.range = range;
+	} else {
+		if (!exists)
+			mob->status.rhw.range = 0;
 	}
 	
 	if (this->nodeExists(node, "SkillRange")) {
@@ -4643,6 +4600,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->range2 = range;
+	} else {
+		if (!exists)
+			mob->range2 = 0;
 	}
 	
 	if (this->nodeExists(node, "ChaseRange")) {
@@ -4652,6 +4612,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->range3 = range;
+	} else {
+		if (!exists)
+			mob->range3 = 0;
 	}
 	
 	if (this->nodeExists(node, "Size")) {
@@ -4674,6 +4637,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 		}
 
 		mob->status.size = static_cast<e_size>(constant);
+	} else {
+		if (!exists)
+			mob->status.size = SZ_SMALL;
 	}
 	
 	if (this->nodeExists(node, "Race")) {
@@ -4696,24 +4662,25 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 		}
 
 		mob->status.race = static_cast<e_race>(constant);
+	} else {
+		if (!exists)
+			mob->status.race = RC_FORMLESS;
 	}
 
 	if (this->nodeExists(node, "RaceGroups")) {
-		const auto& raceNode = node["RaceGroups"];
+		const YAML::Node &raceNode = node["RaceGroups"];
 
 		for (const auto &raceit : raceNode) {
-			std::string raceName;
-			c4::from_chars(raceit.key(), &raceName);
-			std::string raceName_constant = "RC2_" + raceName;
+			std::string raceName = raceit.first.as<std::string>(), raceName_constant = "RC2_" + raceName;
 			int64 constant;
 
 			if (!script_get_constant(raceName_constant.c_str(), &constant)) {
-				this->invalidWarning(raceNode[raceit.key()], "Unknown monster race group %s, skipping.\n", raceName.c_str());
+				this->invalidWarning(raceNode[raceName], "Unknown monster race group %s, skipping.\n", raceName.c_str());
 				continue;
 			}
 
 			if (!CHK_RACE2(constant)) {
-				this->invalidWarning(raceNode[raceit.key()], "Invalid monster race group %s, skipping.\n", raceName.c_str());
+				this->invalidWarning(raceNode[raceName], "Invalid monster race group %s, skipping.\n", raceName.c_str());
 				continue;
 			}
 
@@ -4749,6 +4716,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 		}
 
 		mob->status.def_ele = static_cast<e_element>(constant);
+	} else {
+		if (!exists)
+			mob->status.def_ele = ELE_NEUTRAL;
 	}
 
 	if (this->nodeExists(node, "ElementLevel")) {
@@ -4763,6 +4733,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 		}
 
 		mob->status.ele_lv = static_cast<uint8>(level);
+	} else {
+		if (!exists)
+			mob->status.ele_lv = 1;
 	}
 
 	if (this->nodeExists(node, "WalkSpeed")) {
@@ -4777,6 +4750,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 		}
 
 		mob->status.speed = speed;
+	} else {
+		if (!exists)
+			mob->status.speed = DEFAULT_WALK_SPEED;
 	}
 
 	if (this->nodeExists(node, "AttackDelay")) {
@@ -4786,6 +4762,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->status.adelay = cap_value(speed, battle_config.monster_max_aspd * 2, 4000);
+	} else {
+		if (!exists)
+			mob->status.adelay = cap_value(0, battle_config.monster_max_aspd * 2, 4000);
 	}
 	
 	if (this->nodeExists(node, "AttackMotion")) {
@@ -4795,6 +4774,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->status.amotion = cap_value(speed, battle_config.monster_max_aspd, 2000);
+	} else {
+		if (!exists)
+			mob->status.amotion = cap_value(0, battle_config.monster_max_aspd, 2000);
 	}
 
 	if (this->nodeExists(node, "DamageMotion")) {
@@ -4807,6 +4789,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			speed = speed * battle_config.monster_damage_delay_rate / 100;
 
 		mob->status.dmotion = speed;
+	} else {
+		if (!exists)
+			mob->status.dmotion = 0;
 	}
 	
 	if (this->nodeExists(node, "DamageTaken")) {
@@ -4816,6 +4801,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 			return 0;
 
 		mob->damagetaken = damage;
+	} else {
+		if (!exists)
+			mob->damagetaken = 100;
 	}
 
 	if (this->nodeExists(node, "Ai")) {
@@ -4838,6 +4826,9 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 		}
 
 		mob->status.mode = static_cast<e_mode>(constant);
+	} else {
+		if (!exists)
+			mob->status.mode = static_cast<e_mode>(MONSTER_TYPE_06);
 	}
 
 	if (this->nodeExists(node, "Class")) {
@@ -4860,24 +4851,25 @@ uint64 MobDatabase::parseBodyNode(const ryml::NodeRef& node) {
 		}
 
 		mob->status.class_ = static_cast<uint8>(constant);
+	} else {
+		if (!exists)
+			mob->status.class_ = CLASS_NORMAL;
 	}
 
 	if (this->nodeExists(node, "Modes")) {
-		const auto& modeNode = node["Modes"];
+		const YAML::Node &modeNode = node["Modes"];
 
-		for (const auto& modeit : modeNode) {
-			std::string modeName;
-			c4::from_chars(modeit.key(), &modeName);
-			std::string modeName_constant = "MD_" + modeName;
+		for (const auto &modeit : modeNode) {
+			std::string modeName = modeit.first.as<std::string>(), modeName_constant = "MD_" + modeName;
 			int64 constant;
 
 			if (!script_get_constant(modeName_constant.c_str(), &constant)) {
-				this->invalidWarning(modeNode[modeit.key()], "Unknown monster mode %s, skipping.\n", modeName.c_str());
+				this->invalidWarning(modeNode[modeName], "Unknown monster mode %s, skipping.\n", modeName.c_str());
 				continue;
 			}
 
 			if (constant < MD_NONE || constant > MD_SKILLIMMUNE) {
-				this->invalidWarning(modeNode[modeit.key()], "Invalid monster mode %s, skipping.\n", modeName.c_str());
+				this->invalidWarning(modeNode[modeName], "Invalid monster mode %s, skipping.\n", modeName.c_str());
 				continue;
 			}
 
@@ -4934,6 +4926,9 @@ void MobDatabase::loadingFinished() {
 		if (battle_config.chase_range_rate != 100)
 			mob->range3 = max(mob->range2, mob->range3 * battle_config.chase_range_rate / 100);
 
+		// Tests showed that chase range is effectively 2 cells larger than expected [Playtester]
+		mob->range3 += 2;
+
 		// If the attack animation is longer than the delay, the client crops the attack animation!
 		// On aegis there is no real visible effect of having a recharge-time less than amotion anyway.
 		mob->status.adelay = max(mob->status.adelay, mob->status.amotion);
@@ -4966,8 +4961,6 @@ void MobDatabase::loadingFinished() {
 		mob->status.hp = mob->status.max_hp;
 		mob->status.sp = mob->status.max_sp;
 	}
-
-	TypesafeCachedYamlDatabase::loadingFinished();
 }
 
 MobDatabase mob_db;
@@ -4978,204 +4971,173 @@ MobDatabase mob_db;
  * @return True on success or false otherwise
  */
 static bool mob_read_sqldb_sub(std::vector<std::string> str) {
-	ryml::Tree tree;
-	ryml::NodeRef node = tree.rootref();
-	node |= ryml::MAP;
+	YAML::Node node;
 	int32 index = -1;
 
-	node["Id"] << str[++index];
+	node["Id"] = std::stoul(str[++index]);
 	if (!str[++index].empty())
-		node["AegisName"] << str[index];
+		node["AegisName"] = str[index];
 	if (!str[++index].empty())
-		node["Name"] << str[index];
+		node["Name"] = str[index];
 	if (!str[++index].empty())
-		node["JapaneseName"] << str[index];
+		node["JapaneseName"] = str[index];
 	if (!str[++index].empty() && std::stoi(str[index]) > 1)
-		node["Level"] << str[index];
+		node["Level"] = std::stoi(str[index]);
 	if (!str[++index].empty() && std::stoul(str[index]) > 1)
-		node["Hp"] << str[index];
+		node["Hp"] = std::stoul(str[index]);
 	if (!str[++index].empty() && std::stoul(str[index]) > 1)
-		node["Sp"] << str[index];
+		node["Sp"] = std::stoul(str[index]);
 	if (!str[++index].empty())
-		node["BaseExp"] << str[index];
+		node["BaseExp"] = std::stoul(str[index]);
 	if (!str[++index].empty())
-		node["JobExp"] << str[index];
+		node["JobExp"] = std::stoul(str[index]);
 	if (!str[++index].empty())
-		node["MvpExp"] << str[index];
+		node["MvpExp"] = std::stoul(str[index]);
 	if (!str[++index].empty())
-		node["Attack"] << str[index];
+		node["Attack"] = std::stoi(str[index]);
 	if (!str[++index].empty())
-		node["Attack2"] << str[index];
+		node["Attack2"] = std::stoi(str[index]);
 	if (!str[++index].empty())
-		node["Defense"] << str[index];
+		node["Defense"] = std::stoi(str[index]);
 	if (!str[++index].empty())
-		node["MagicDefense"] << str[index];
+		node["MagicDefense"] = std::stoi(str[index]);
 	if (!str[++index].empty() && std::stoi(str[index]) > 1)
-		node["Str"] << str[index];
+		node["Str"] = std::stoi(str[index]);
 	if (!str[++index].empty() && std::stoi(str[index]) > 1)
-		node["Agi"] << str[index];
+		node["Agi"] = std::stoi(str[index]);
 	if (!str[++index].empty() && std::stoi(str[index]) > 1)
-		node["Vit"] << str[index];
+		node["Vit"] = std::stoi(str[index]);
 	if (!str[++index].empty() && std::stoi(str[index]) > 1)
-		node["Int"] << str[index];
+		node["Int"] = std::stoi(str[index]);
 	if (!str[++index].empty() && std::stoi(str[index]) > 1)
-		node["Dex"] << str[index];
+		node["Dex"] = std::stoi(str[index]);
 	if (!str[++index].empty() && std::stoi(str[index]) > 1)
-		node["Luk"] << str[index];
+		node["Luk"] = std::stoi(str[index]);
 	if (!str[++index].empty())
-		node["AttackRange"] << str[index];
+		node["AttackRange"] = std::stoi(str[index]);
 	if (!str[++index].empty())
-		node["SkillRange"] << str[index];
+		node["SkillRange"] = std::stoi(str[index]);
 	if (!str[++index].empty())
-		node["ChaseRange"] << str[index];
+		node["ChaseRange"] = std::stoi(str[index]);
 	if (!str[++index].empty() && strcmp(str[index].c_str(), "Small") != 0)
-		node["Size"] << str[index];
+		node["Size"] = str[index];
 	if (!str[++index].empty() && strcmp(str[index].c_str(), "Formless") != 0)
-		node["Race"] << str[index];
-
-	ryml::NodeRef raceGroupsNode = node["RaceGroups"];
-	raceGroupsNode |= ryml::MAP;
+		node["Race"] = str[index];
 
 	for (uint16 i = 1; i < RC2_MAX; i++) {
-		if (!str[i + index].empty()) {
-			raceGroupsNode[c4::to_csubstr(script_get_constant_str("RC2_", i) + 4)] << (std::stoi(str[i + index]) ? "true" : "false");
-		}
+		if (!str[i + index].empty())
+			node["RaceGroups"][script_get_constant_str("RC2_", i) + 4] = std::stoi(str[i + index]) ? "true" : "false";
 	}
 
 	index += RC2_MAX - 1;
 
 	if (!str[++index].empty() && strcmp(str[index].c_str(), "Neutral") != 0)
-		node["Element"] << str[index];
+		node["Element"] = str[index];
 	if (!str[++index].empty() && std::stoi(str[index]) > 1)
-		node["ElementLevel"] << str[index];
+		node["ElementLevel"] = std::stoi(str[index]);
 	if (!str[++index].empty())
-		node["WalkSpeed"] << str[index];
+		node["WalkSpeed"] = std::stoi(str[index]);
 	if (!str[++index].empty())
-		node["AttackDelay"] << str[index];
+		node["AttackDelay"] = std::stoi(str[index]);
 	if (!str[++index].empty())
-		node["AttackMotion"] << str[index];
+		node["AttackMotion"] = std::stoi(str[index]);
 	if (!str[++index].empty())
-		node["DamageMotion"] << str[index];
+		node["DamageMotion"] = std::stoi(str[index]);
 	if (!str[++index].empty())
-		node["DamageTaken"] << str[index];
+		node["DamageTaken"] = std::stoi(str[index]);
 	if (!str[++index].empty() && strcmp(str[index].c_str(), "06") != 0)
-		node["Ai"] << str[index];
+		node["Ai"] = str[index];
 	if (!str[++index].empty() && strcmp(str[index].c_str(), "Normal") != 0)
-		node["Class"] << str[index];
+		node["Class"] = str[index];
 
-	ryml::NodeRef modes = node["Modes"];
-	modes |= ryml::MAP;
+	YAML::Node modes;
 
 	if (!str[++index].empty())
-		modes["CanMove"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["CanMove"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["Looter"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["Looter"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["Aggressive"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["Aggressive"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["Assist"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["Assist"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["CastSensorIdle"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["CastSensorIdle"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["NoRandomWalk"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["NoRandomWalk"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["NoCast"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["NoCast"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["CanAttack"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["CanAttack"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["CastSensorChase"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["CastSensorChase"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["ChangeChase"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["ChangeChase"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["Angry"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["Angry"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["ChangeTargetMelee"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["ChangeTargetMelee"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["ChangeTargetChase"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["ChangeTargetChase"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["TargetWeak"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["TargetWeak"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["RandomTarget"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["RandomTarget"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["IgnoreMelee"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["IgnoreMelee"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["IgnoreMagic"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["IgnoreMagic"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["IgnoreRanged"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["IgnoreRanged"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["Mvp"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["Mvp"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["IgnoreMisc"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["IgnoreMisc"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["KnockBackImmune"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["KnockBackImmune"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["TeleportBlock"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["TeleportBlock"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["FixedItemDrop"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["FixedItemDrop"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["Detector"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["Detector"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["StatusImmune"] << (std::stoi(str[index]) ? "true" : "false");
+		modes["StatusImmune"] = std::stoi(str[index]) ? "true" : "false";
 	if (!str[++index].empty())
-		modes["SkillImmune"] << (std::stoi(str[index]) ? "true" : "false");
-
-	ryml::NodeRef mvpDropsNode = node["MvpDrops"];
-	mvpDropsNode |= ryml::SEQ;
+		modes["SkillImmune"] = std::stoi(str[index]) ? "true" : "false";
+	node["Modes"] = modes;
 
 	for (uint8 i = 0; i < MAX_MVP_DROP; i++) {
-		if (!str[++index].empty()) {
-			ryml::NodeRef entry = mvpDropsNode[i];
-			entry |= ryml::MAP;
+		YAML::Node mvpdrops;
 
-			entry["Item"] << str[index];
-			if (!str[++index].empty())
-				entry["Rate"] << str[index];
-			if (!str[++index].empty() && strcmp(str[index].c_str(), "None") != 0)
-				entry["RandomOptionGroup"] << str[index];
-			if (!str[++index].empty() && std::stoi(str[index]) >= 0)
-				entry["Index"] << str[index];
-		} else
-			index += 3;
+		if (!str[++index].empty())
+			mvpdrops["Item"] = str[index];
+		if (!str[++index].empty())
+			mvpdrops["Rate"] = std::stoi(str[index]);
+		if (!str[++index].empty() && strcmp(str[index].c_str(), "None") != 0)
+			mvpdrops["RandomOptionGroup"] = str[index];
+		if (!str[++index].empty() && std::stoi(str[index]) >= 0)
+			mvpdrops["Index"] = std::stoi(str[index]);
+
+		if (!mvpdrops.IsNull())
+			node["MvpDrops"][i] = mvpdrops;
 	}
-
-	ryml::NodeRef dropsNode = node["Drops"];
-	dropsNode |= ryml::SEQ;
 
 	for (uint8 i = 0; i < MAX_MOB_DROP; i++) {
-		if (!str[++index].empty()) {
-			ryml::NodeRef entry = dropsNode[i];
-			entry |= ryml::MAP;
+		YAML::Node drops;
 
-			entry["Item"] << str[index];
-			if (!str[++index].empty())
-				entry["Rate"] << str[index];
-			if (!str[++index].empty())
-				entry["StealProtected"] << (std::stoi(str[index]) ? "true" : "false");
-			if (!str[++index].empty() && strcmp(str[index].c_str(), "None") != 0)
-				entry["RandomOptionGroup"] << str[index];
-			if (!str[++index].empty() && std::stoi(str[index]) >= 0)
-				entry["Index"] << str[index];
-		} else
-			index += 4;
-	}
+		if (!str[++index].empty())
+			drops["Item"] = str[index];
+		if (!str[++index].empty())
+			drops["Rate"] = std::stoi(str[index]);
+		if (!str[++index].empty())
+			drops["StealProtected"] = std::stoi(str[index]) ? "true" : "false";
+		if (!str[++index].empty() && strcmp(str[index].c_str(), "None") != 0)
+			drops["RandomOptionGroup"] = str[index];
+		if (!str[++index].empty() && std::stoi(str[index]) >= 0)
+			drops["Index"] = std::stoi(str[index]);
 
-#ifdef RENEWAL
-	if (!str[++index].empty())
-		node["Resistance"] << std::stoi(str[index]);
-	if (!str[++index].empty())
-		node["MagicResistance"] << std::stoi(str[index]);
-#endif
-
-	if( !modes.has_children() ){
-		node.remove_child( modes );
-	}
-
-	if( !mvpDropsNode.has_children() ){
-		node.remove_child( mvpDropsNode );
-	}
-
-	if( !dropsNode.has_children() ){
-		node.remove_child( dropsNode );
+		if (!drops.IsNull())
+			node["Drops"][i] = drops;
 	}
 
 	return mob_db.parseBodyNode(node) > 0;
@@ -5194,14 +5156,11 @@ static int mob_read_sqldb(void)
 	for( uint8 fi = 0; fi < ARRAYLENGTH(mob_db_name); ++fi ) {
 		// retrieve all rows from the mob database
 		if( SQL_ERROR == Sql_Query(mmysql_handle, "SELECT `id`,`name_aegis`,`name_english`,`name_japanese`,`level`,`hp`,`sp`,`base_exp`,`job_exp`,`mvp_exp`,`attack`,`attack2`,`defense`,`magic_defense`,`str`,`agi`,`vit`,`int`,`dex`,`luk`,`attack_range`,`skill_range`,`chase_range`,`size`,`race`,"
-			"`racegroup_goblin`,`racegroup_kobold`,`racegroup_orc`,`racegroup_golem`,`racegroup_guardian`,`racegroup_ninja`,`racegroup_gvg`,`racegroup_battlefield`,`racegroup_treasure`,`racegroup_biolab`,`racegroup_manuk`,`racegroup_splendide`,`racegroup_scaraba`,`racegroup_ogh_atk_def`,`racegroup_ogh_hidden`,`racegroup_bio5_swordman_thief`,`racegroup_bio5_acolyte_merchant`,`racegroup_bio5_mage_archer`,`racegroup_bio5_mvp`,`racegroup_clocktower`,`racegroup_thanatos`,`racegroup_faceworm`,`racegroup_hearthunter`,`racegroup_rockridge`,`racegroup_werner_lab`,`racegroup_temple_demon`,`racegroup_illusion_vampire`,`racegroup_malangdo`,`racegroup_ep172alpha`,`racegroup_ep172beta`,`racegroup_ep172bath`,`racegroup_illusion_turtle`,`racegroup_rachel_sanctuary`,`racegroup_illusion_luanda`,"
+			"`racegroup_goblin`,`racegroup_kobold`,`racegroup_orc`,`racegroup_golem`,`racegroup_guardian`,`racegroup_ninja`,`racegroup_gvg`,`racegroup_battlefield`,`racegroup_treasure`,`racegroup_biolab`,`racegroup_manuk`,`racegroup_splendide`,`racegroup_scaraba`,`racegroup_ogh_atk_def`,`racegroup_ogh_hidden`,`racegroup_bio5_swordman_thief`,`racegroup_bio5_acolyte_merchant`,`racegroup_bio5_mage_archer`,`racegroup_bio5_mvp`,`racegroup_clocktower`,`racegroup_thanatos`,`racegroup_faceworm`,`racegroup_hearthunter`,`racegroup_rockridge`,`racegroup_werner_lab`,`racegroup_temple_demon`,`racegroup_illusion_vampire`,"
 			"`element`,`element_level`,`walk_speed`,`attack_delay`,`attack_motion`,`damage_motion`,`damage_taken`,`ai`,`class`,"
 			"`mode_canmove`,`mode_looter`,`mode_aggressive`,`mode_assist`,`mode_castsensoridle`,`mode_norandomwalk`,`mode_nocast`,`mode_canattack`,`mode_castsensorchase`,`mode_changechase`,`mode_angry`,`mode_changetargetmelee`,`mode_changetargetchase`,`mode_targetweak`,`mode_randomtarget`,`mode_ignoremelee`,`mode_ignoremagic`,`mode_ignoreranged`,`mode_mvp`,`mode_ignoremisc`,`mode_knockbackimmune`,`mode_teleportblock`,`mode_fixeditemdrop`,`mode_detector`,`mode_statusimmune`,`mode_skillimmune`,"
 			"`mvpdrop1_item`,`mvpdrop1_rate`,`mvpdrop1_option`,`mvpdrop1_index`,`mvpdrop2_item`,`mvpdrop2_rate`,`mvpdrop2_option`,`mvpdrop2_index`,`mvpdrop3_item`,`mvpdrop3_rate`,`mvpdrop3_option`,`mvpdrop3_index`,"
 			"`drop1_item`,`drop1_rate`,`drop1_nosteal`,`drop1_option`,`drop1_index`,`drop2_item`,`drop2_rate`,`drop2_nosteal`,`drop2_option`,`drop2_index`,`drop3_item`,`drop3_rate`,`drop3_nosteal`,`drop3_option`,`drop3_index`,`drop4_item`,`drop4_rate`,`drop4_nosteal`,`drop4_option`,`drop4_index`,`drop5_item`,`drop5_rate`,`drop5_nosteal`,`drop5_option`,`drop5_index`,`drop6_item`,`drop6_rate`,`drop6_nosteal`,`drop6_option`,`drop6_index`,`drop7_item`,`drop7_rate`,`drop7_nosteal`,`drop7_option`,`drop7_index`,`drop8_item`,`drop8_rate`,`drop8_nosteal`,`drop8_option`,`drop8_index`,`drop9_item`,`drop9_rate`,`drop9_nosteal`,`drop9_option`,`drop9_index`,`drop10_item`,`drop10_rate`,`drop10_nosteal`,`drop10_option`,`drop10_index`"
-#ifdef RENEWAL
-			",`resistance`,`magic_resistance`"
-#endif
 			" FROM `%s`", mob_db_name[fi]) ) {
 			Sql_ShowDebug(mmysql_handle);
 			continue;
@@ -5210,13 +5169,10 @@ static int mob_read_sqldb(void)
 		uint32 total_columns = Sql_NumColumns(mmysql_handle);
 		uint64 total_rows = Sql_NumRows(mmysql_handle), rows = 0, count = 0;
 
-		ShowStatus("Loading '" CL_WHITE "%" PRIdPTR CL_RESET "' entries in '" CL_WHITE "%s" CL_RESET "'\n", total_rows, mob_db_name[fi]);
-
 		// process rows one by one
 		while( SQL_SUCCESS == Sql_NextRow(mmysql_handle) ) {
-#ifdef DETAILED_LOADING_OUTPUT
-			ShowStatus("Loading [%" PRIu64 "/%" PRIu64 "] entries in '" CL_WHITE "%s" CL_RESET "'" CL_CLL "\r", ++rows, total_rows, mob_db_name[fi]);
-#endif
+			ShowStatus("Loading [%" PRIu64 "/%" PRIu64 "] rows from '" CL_WHITE "%s" CL_RESET "'" CL_CLL "\r", ++rows, total_rows, mob_db_name[fi]);
+
 			std::vector<std::string> data = {};
 
 			for (uint32 i = 0; i < total_columns; i++) {
@@ -5255,7 +5211,7 @@ const std::string MobAvailDatabase::getDefaultLocation() {
  * @param node: YAML node containing the entry.
  * @return count of successfully parsed rows
  */
-uint64 MobAvailDatabase::parseBodyNode(const ryml::NodeRef& node) {
+uint64 MobAvailDatabase::parseBodyNode(const YAML::Node &node) {
 	std::string mob_name;
 
 	if (!this->asString(node, "Mob", mob_name))
@@ -5488,27 +5444,6 @@ uint64 MobAvailDatabase::parseBodyNode(const ryml::NodeRef& node) {
 		mob->vd.head_bottom = item->look;
 	}
 
-	if (this->nodeExists(node, "Robe")) {
-		if (pcdb_checkid(mob->vd.class_) == 0) {
-			this->invalidWarning(node["Robe"], "Robe is only applicable to Job sprites.\n");
-			return 0;
-		}
-
-		std::string robe;
-
-		if (!this->asString(node, "Robe", robe))
-			return 0;
-
-		std::shared_ptr<item_data> item = item_db.search_aegisname(robe.c_str());
-
-		if (item == nullptr) {
-			this->invalidWarning(node["Robe"], "Robe %s is not a valid item.\n", robe.c_str());
-			return 0;
-		}
-
-		mob->vd.robe = item->look;
-	}
-
 	if (this->nodeExists(node, "PetEquip")) {
 		std::shared_ptr<s_pet_db> pet_db_ptr = pet_db.find(mob->id);
 
@@ -5533,12 +5468,10 @@ uint64 MobAvailDatabase::parseBodyNode(const ryml::NodeRef& node) {
 	}
 
 	if (this->nodeExists(node, "Options")) {
-		const auto& optionNode = node["Options"];
+		const YAML::Node &optionNode = node["Options"];
 
-		for (const auto& it : optionNode) {
-			std::string option;
-			c4::from_chars(it.key(), &option);
-			std::string option_constant = "OPTION_" + option;
+		for (const auto &it : optionNode) {
+			std::string option = it.first.as<std::string>(), option_constant = "OPTION_" + option;
 			int64 constant;
 
 			if (!script_get_constant(option_constant.c_str(), &constant)) {
@@ -5582,7 +5515,7 @@ const std::string MobSummonDatabase::getDefaultLocation() {
  * @param node: YAML node containing the entry.
  * @return count of successfully parsed rows
  */
-uint64 MobSummonDatabase::parseBodyNode(const ryml::NodeRef& node) {
+uint64 MobSummonDatabase::parseBodyNode(const YAML::Node &node) {
 	std::string group_name;
 
 	if (!this->asString(node, "Group", group_name))
@@ -5626,9 +5559,9 @@ uint64 MobSummonDatabase::parseBodyNode(const ryml::NodeRef& node) {
 	}
 
 	if (this->nodeExists(node, "Summon")) {
-		const auto& MobNode = node["Summon"];
+		const YAML::Node &MobNode = node["Summon"];
 
-		for (const auto& mobit : MobNode) {
+		for (const YAML::Node &mobit : MobNode) {
 			if (!this->nodesExist(mobit, { "Mob", "Rate" })) {
 				continue;
 			}
@@ -5684,7 +5617,7 @@ const std::string MobChatDatabase::getDefaultLocation() {
  * @param node: YAML node containing the entry.
  * @return count of successfully parsed rows
  */
-uint64 MobChatDatabase::parseBodyNode(const ryml::NodeRef& node) {
+uint64 MobChatDatabase::parseBodyNode(const YAML::Node &node) {
 	uint16 id;
 
 	if (!this->asUInt16(node, "Id", id))
@@ -5781,9 +5714,6 @@ static bool mob_parse_row_mobskilldb(char** str, int columns, int current)
 		{ "masterattacked",    MSC_MASTERATTACKED    },
 		{ "alchemist",         MSC_ALCHEMIST         },
 		{ "onspawn",           MSC_SPAWN             },
-		{ "mobnearbygt",       MSC_MOBNEARBYGT       },
-		{ "groundattacked",    MSC_GROUNDATTACKED    },
-		{ "damagedgt",         MSC_DAMAGEDGT         },
 	}, cond2[] ={
 		{	"anybad",		-1				},
 		{	"stone",		SC_STONE		},
@@ -6064,7 +5994,7 @@ const std::string MobItemRatioDatabase::getDefaultLocation() {
  * @param node: YAML node containing the entry.
  * @return count of successfully parsed rows
  */
-uint64 MobItemRatioDatabase::parseBodyNode(const ryml::NodeRef& node) {
+uint64 MobItemRatioDatabase::parseBodyNode(const YAML::Node &node) {
 	std::string item_name;
 
 	if (!this->asString(node, "Item", item_name))
@@ -6092,20 +6022,19 @@ uint64 MobItemRatioDatabase::parseBodyNode(const ryml::NodeRef& node) {
 	}
 	
 	if (this->nodeExists(node, "Ratio")) {
-		uint32 ratio;
+		uint16 ratio;
 
-		if (!this->asUInt32(node, "Ratio", ratio))
+		if (!this->asUInt16(node, "Ratio", ratio))
 			return 0;
 
 		data->drop_ratio = ratio;
 	}
 
 	if (this->nodeExists(node, "List")) {
-		const auto& MobNode = node["List"];
+		const YAML::Node &MobNode = node["List"];
 
-		for (const auto& mobit : MobNode) {
-			std::string mob_name;
-			c4::from_chars(mobit.key(), &mob_name);
+		for (const auto mobit : MobNode) {
+			std::string mob_name = mobit.first.as<std::string>();
 
 			std::shared_ptr<s_mob_db> mob = mobdb_search_aegisname(mob_name.c_str());
 
@@ -6308,170 +6237,6 @@ static void mob_drop_ratio_adjust(void){
 	mob_item_drop_ratio.clear();
 }
 
-const std::string MapDropDatabase::getDefaultLocation(){
-	return std::string( db_path ) + "/map_drops.yml";
-}
-
-uint64 MapDropDatabase::parseBodyNode( const ryml::NodeRef& node ){
-	std::string mapname;
-
-	if( !this->asString( node, "Map", mapname ) ){
-		return 0;
-	}
-
-	uint16 mapindex = mapindex_name2idx( mapname.c_str(), nullptr );
-
-	if( mapindex == 0 ){
-		this->invalidWarning( node["Map"], "Unknown map \"%s\".\n", mapname.c_str() );
-		return 0;
-	}
-
-	int16 mapid = map_mapindex2mapid( mapindex );
-
-	if( mapid < 0 ){
-		// Silently ignore. Map might be on a different map-server
-		return 0;
-	}
-
-	std::shared_ptr<s_map_drops> mapdrops = this->find( mapid );
-	bool exists = mapdrops != nullptr;
-
-	if( !exists ){
-		mapdrops = std::make_shared<s_map_drops>();
-		mapdrops->mapid = mapid;
-	}
-
-	if( this->nodeExists( node, "GlobalDrops" ) ){
-		const ryml::NodeRef& globalNode = node["GlobalDrops"];
-
-		for( const auto& it : globalNode ){
-			if( !this->parseDrop( it, mapdrops->globals ) ){
-				return 0;
-			}
-		}
-	}
-
-	if( this->nodeExists( node, "SpecificDrops" ) ){
-		const ryml::NodeRef& specificNode = node["SpecificDrops"];
-
-		for( const auto& monsterNode : specificNode ){
-			if( !this->nodesExist( monsterNode, { "Monster", "Drops" } ) ){
-				return 0;
-			}
-
-			std::string mobname;
-
-			if( !this->asString( monsterNode, "Monster", mobname ) ){
-				return 0;
-			}
-
-			std::shared_ptr<s_mob_db> mob = mobdb_search_aegisname( mobname.c_str() );
-
-			if( mob == nullptr ){
-				this->invalidWarning( monsterNode["Monster"], "Unknown monster \"%s\".\n", mobname.c_str() );
-				return 0;
-			}
-
-			std::unordered_map<uint16, std::shared_ptr<s_mob_drop>>& specificDrops = mapdrops->specific[mob->id];
-
-			for( const auto& it : monsterNode["Drops"] ){
-				if( !this->parseDrop( it, specificDrops ) ){
-					return 0;
-				}
-			}
-		}
-	}
-
-	if( !exists ){
-		this->put( mapid, mapdrops );
-	}
-
-	return 1;
-}
-
-bool MapDropDatabase::parseDrop( const ryml::NodeRef& node, std::unordered_map<uint16, std::shared_ptr<s_mob_drop>>& drops ){
-	uint16 index;
-
-	if( !this->asUInt16( node, "Index", index ) ){
-		return false;
-	}
-
-	std::shared_ptr<s_mob_drop> drop = util::umap_find( drops, index );
-	bool exists = drop != nullptr;
-
-	if( !exists ){
-		if( !this->nodesExist( node, { "Item", "Rate" } ) ){
-			return false;
-		}
-
-		drop = std::make_shared<s_mob_drop>();
-		drop->steal_protected = true;
-	}
-
-	if( this->nodeExists( node, "Item" ) ){
-		std::string itemname;
-
-		if( !this->asString( node, "Item", itemname ) ){
-			return 0;
-		}
-
-		std::shared_ptr<item_data> item = item_db.search_aegisname( itemname.c_str() );
-
-		if( item == nullptr ){
-			this->invalidWarning( node["Item"], "Item %s does not exist.\n", itemname.c_str() );
-			return false;
-		}
-
-		drop->nameid = item->nameid;
-	}
-
-	if( this->nodeExists( node, "Rate" ) ){
-		uint32 rate;
-
-		if( !this->asUInt32Rate( node, "Rate", rate, 100000 ) ){
-			return false;
-		}
-
-		if( rate == 0 ){
-			if( exists ){
-				drops.erase( index );
-				return true;
-			}else{
-				this->invalidWarning( node["Rate"], "Rate %" PRIu32 " is below minimum of 1.\n", rate );
-				return false;
-			}
-		}else if( rate > 100000 ){
-			this->invalidWarning( node["Rate"], "Rate %" PRIu32 " exceeds maximum of 100000.\n", rate );
-			return false;
-		}
-
-		drop->rate = rate;
-	}
-
-	if( this->nodeExists( node, "RandomOptionGroup" ) ){
-		std::string name;
-
-		if( !this->asString( node, "RandomOptionGroup", name ) ){
-			return false;
-		}
-
-		if( !random_option_group.option_get_id( name, drop->randomopt_group ) ){
-			this->invalidWarning( node["RandomOptionGroup"], "Unknown random option group \"%s\".\n", name.c_str() );
-			return false;
-		}
-	}else{
-		if( !exists ){
-			drop->randomopt_group = 0;
-		}
-	}
-
-	if( !exists ){
-		drops[index] = drop;
-	}
-
-	return true;
-}
-
 /**
  * Copy skill from DB to monster
  * @param mob Monster DB entry
@@ -6583,7 +6348,6 @@ static void mob_load(void)
 	mob_item_drop_ratio.load();
 	mob_avail_db.load();
 	mob_summon_db.load();
-	map_drop_db.load();
 
 	mob_drop_ratio_adjust();
 	mob_skill_db_set();
@@ -6746,9 +6510,9 @@ void do_final_mob(bool is_reload){
 	mob_db.clear();
 	mob_chat_db.clear();
 	mob_skill_db.clear();
+
 	mob_item_drop_ratio.clear();
 	mob_summon_db.clear();
-	map_drop_db.clear();
 	if( !is_reload ) {
 		ers_destroy(item_drop_ers);
 		ers_destroy(item_drop_list_ers);

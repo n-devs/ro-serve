@@ -10,30 +10,12 @@
 #endif
 #include <vector>
 
-#include <common/core.hpp>
-#include <common/grfio.hpp>
-#include <common/malloc.hpp>
-#include <common/mmo.hpp>
-#include <common/showmsg.hpp>
-#include <common/utils.hpp>
-
-using namespace rathena::server_core;
-
-namespace rathena{
-	namespace tool_mapcache{
-		class MapcacheTool : public Core{
-			protected:
-				bool initialize( int argc, char* argv[] ) override;
-
-			public:
-				MapcacheTool() : Core( e_core_type::TOOL ){
-
-				}
-		};
-	}
-}
-
-using namespace rathena::tool_mapcache;
+#include "../common/core.hpp"
+#include "../common/grfio.hpp"
+#include "../common/malloc.hpp"
+#include "../common/mmo.hpp"
+#include "../common/showmsg.hpp"
+#include "../common/utils.hpp"
 
 std::string grf_list_file = "conf/grf-files.txt";
 std::string map_list_file = "map_index.txt";
@@ -203,7 +185,8 @@ void process_args(int argc, char *argv[])
 
 }
 
-bool MapcacheTool::initialize( int argc, char* argv[] ){
+int do_init(int argc, char** argv)
+{
 	/* setup pre-defined, #define-dependant */
 	map_cache_file = std::string(db_path) + "/" + std::string(DBPATH) + "map_cache.dat";
 
@@ -229,7 +212,7 @@ bool MapcacheTool::initialize( int argc, char* argv[] ){
 		map_cache_fp = fopen(map_cache_file.c_str(), "r+b");
 	if(map_cache_fp == NULL) {
 		ShowError("Failure when opening map cache file %s\n", map_cache_file.c_str());
-		return false;
+		exit(EXIT_FAILURE);
 	}
 
 	// Open the map list
@@ -243,7 +226,7 @@ bool MapcacheTool::initialize( int argc, char* argv[] ){
 		list = fopen(filename.c_str(), "r");
 		if (list == NULL) {
 			ShowError("Failure when opening maps list file %s\n", filename.c_str());
-			return false;
+			exit(EXIT_FAILURE);
 		}
 
 		// Initialize the main header
@@ -302,9 +285,9 @@ bool MapcacheTool::initialize( int argc, char* argv[] ){
 
 	ShowInfo("%d maps now in cache\n", header.map_count);
 
-	return true;
+	return 0;
 }
 
-int main( int argc, char *argv[] ){
-	return main_core<MapcacheTool>( argc, argv );
+void do_final(void)
+{
 }

@@ -8,12 +8,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <common/cbasetypes.hpp>
-#include <common/db.hpp>
-#include <common/malloc.hpp>
-#include <common/nullpo.hpp>
-#include <common/random.hpp>
-#include <common/showmsg.hpp>
+#include "../common/cbasetypes.hpp"
+#include "../common/db.hpp"
+#include "../common/malloc.hpp"
+#include "../common/nullpo.hpp"
+#include "../common/random.hpp"
+#include "../common/showmsg.hpp"
 
 #include "battle.hpp"
 #include "map.hpp"
@@ -106,7 +106,7 @@ int path_blownpos(int16 m,int16 x0,int16 y0,int16 dx,int16 dy,int count)
 				int fy = ( dy != 0 && map_getcellp(mapdata,x0,y0+dy,CELL_CHKPASS) );
 				if( fx && fy )
 				{
-					if(rnd_chance(50, 100))
+					if(rnd()&1)
 						dx=0;
 					else
 						dy=0;
@@ -270,7 +270,7 @@ static int add_path(struct node_heap *heap, struct path_node *tp, int16 x, int16
  *------------------------------------------*/
 bool path_search(struct walkpath_data *wpd, int16 m, int16 x0, int16 y0, int16 x1, int16 y1, int flag, cell_chk cell)
 {
-	int i, x, y, dx = 0, dy = 0;
+	register int i, x, y, dx = 0, dy = 0;
 	struct map_data *mapdata = map_getmapdata(m);
 	struct walkpath_data s_wpd;
 
@@ -504,7 +504,7 @@ int distance_client(int dx, int dy)
 
 	//Bonus factor used by client
 	//This affects even horizontal/vertical lines so they are one cell longer than expected
-	temp_dist -= 0.1;
+	temp_dist -= 0.0625;
 
 	if(temp_dist < 0) temp_dist = 0;
 
@@ -513,12 +513,4 @@ int distance_client(int dx, int dy)
 
 bool direction_diagonal( enum directions direction ){
 	return direction == DIR_NORTHWEST || direction == DIR_SOUTHWEST || direction == DIR_SOUTHEAST || direction == DIR_NORTHEAST;
-}
-
-bool direction_opposite( enum directions direction ){
-	if( direction == DIR_CENTER || direction == DIR_MAX ){
-		return direction;
-	}else{
-		return static_cast<enum directions>( ( direction + DIR_MAX / 2 ) % DIR_MAX );
-	}
 }

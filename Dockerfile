@@ -34,4 +34,4 @@ WORKDIR /ro-serve
 # RUN chmod a+x entrypoint.sh
 
 EXPOSE 5121 6121 6900
-# CMD ["bash"]
+# CMD ["./athena-start","restart"]

@@ -7,16 +7,16 @@
 #include <math.h>
 #include <stdlib.h>
 
-#include <common/cbasetypes.hpp>
-#include <common/malloc.hpp>
-#include <common/mmo.hpp>
-#include <common/nullpo.hpp>
-#include <common/random.hpp>
-#include <common/showmsg.hpp>
-#include <common/strlib.hpp>
-#include <common/timer.hpp>
-#include <common/utilities.hpp>
-#include <common/utils.hpp>
+#include "../common/cbasetypes.hpp"
+#include "../common/malloc.hpp"
+#include "../common/mmo.hpp"
+#include "../common/nullpo.hpp"
+#include "../common/random.hpp"
+#include "../common/showmsg.hpp"
+#include "../common/strlib.hpp"
+#include "../common/timer.hpp"
+#include "../common/utilities.hpp"
+#include "../common/utils.hpp"
 
 #include "clif.hpp"
 #include "intif.hpp"
@@ -281,7 +281,7 @@ int mercenary_delete(s_mercenary_data *md, int reply) {
 	if( md->devotion_flag )
 	{
 		md->devotion_flag = 0;
-		status_change_end(&sd->bl, SC_DEVOTION);
+		status_change_end(&sd->bl, SC_DEVOTION, INVALID_TIMER);
 	}
 
 	switch( reply )
@@ -325,7 +325,6 @@ void merc_contract_init(s_mercenary_data *md) {
 bool mercenary_recv_data(s_mercenary *merc, bool flag)
 {
 	map_session_data *sd;
-	t_tick tick = gettick();
 
 	if( (sd = map_charid2sd(merc->char_id)) == NULL )
 		return false;
@@ -359,10 +358,6 @@ bool mercenary_recv_data(s_mercenary *merc, bool flag)
 		unit_calc_pos(&md->bl, sd->bl.x, sd->bl.y, sd->ud.dir);
 		md->bl.x = md->ud.to_x;
 		md->bl.y = md->ud.to_y;
-
-		// Ticks need to be initialized before adding bl to map_addiddb
-		md->regen.tick.hp = tick;
-		md->regen.tick.sp = tick;
 
 		map_addiddb(&md->bl);
 		status_calc_mercenary(md, SCO_FIRST);
@@ -421,7 +416,7 @@ bool mercenary_dead(s_mercenary_data *md) {
 void mercenary_killbonus(s_mercenary_data *md) {
 	std::vector<sc_type> scs = { SC_MERC_FLEEUP, SC_MERC_ATKUP, SC_MERC_HPUP, SC_MERC_SPUP, SC_MERC_HITUP };
 
-	sc_start(&md->bl,&md->bl, util::vector_random(scs), 100, rnd_value(1, 5), 600000);
+	sc_start(&md->bl,&md->bl, util::vector_random(scs), 100, rnd() % 5, 600000);
 }
 
 /**
@@ -464,7 +459,7 @@ const std::string MercenaryDatabase::getDefaultLocation() {
  * @param node: YAML node containing the entry.
  * @return count of successfully parsed rows
  */
-uint64 MercenaryDatabase::parseBodyNode(const ryml::NodeRef& node) {
+uint64 MercenaryDatabase::parseBodyNode(const YAML::Node &node) {
 	uint32 id;
 
 	if (!this->asUInt32(node, "Id", id))
@@ -864,9 +859,9 @@ uint64 MercenaryDatabase::parseBodyNode(const ryml::NodeRef& node) {
 	mercenary->status.aspd_rate = 1000;
 
 	if (this->nodeExists(node, "Skills")) {
-		const ryml::NodeRef& skillsNode = node["Skills"];
+		const YAML::Node &skillsNode = node["Skills"];
 
-		for (const ryml::NodeRef& skill : skillsNode) {
+		for (const YAML::Node &skill : skillsNode) {
 			std::string skill_name;
 
 			if (!this->asString(skill, "Name", skill_name))

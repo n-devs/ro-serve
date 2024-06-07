@@ -3,10 +3,10 @@
 
 #include "mail.hpp"
 
-#include <common/nullpo.hpp>
-#include <common/showmsg.hpp>
-#include <common/strlib.hpp>
-#include <common/timer.hpp>
+#include "../common/nullpo.hpp"
+#include "../common/showmsg.hpp"
+#include "../common/strlib.hpp"
+#include "../common/timer.hpp"
 
 #include "atcommand.hpp"
 #include "battle.hpp"
@@ -18,7 +18,7 @@
 #include "pc.hpp"
 #include "pet.hpp"
 
-void mail_clear(map_session_data *sd)
+void mail_clear(struct map_session_data *sd)
 {
 	int i;
 
@@ -28,12 +28,11 @@ void mail_clear(map_session_data *sd)
 		sd->mail.item[i].amount = 0;
 	}
 	sd->mail.zeny = 0;
-	sd->mail.dest_id = 0;
 
 	return;
 }
 
-int mail_removeitem(map_session_data *sd, short flag, int idx, int amount)
+int mail_removeitem(struct map_session_data *sd, short flag, int idx, int amount)
 {
 	int i;
 
@@ -54,7 +53,7 @@ int mail_removeitem(map_session_data *sd, short flag, int idx, int amount)
 
 	if( flag ){
 		if( battle_config.mail_attachment_price > 0 ){
-			if( pc_payzeny( sd, battle_config.mail_attachment_price, LOG_TYPE_MAIL ) ){
+			if( pc_payzeny( sd, battle_config.mail_attachment_price, LOG_TYPE_MAIL, NULL ) ){
 				return false;
 			}
 		}
@@ -100,14 +99,13 @@ int mail_removeitem(map_session_data *sd, short flag, int idx, int amount)
 	return 1;
 }
 
-bool mail_removezeny( map_session_data *sd, bool flag ){
+bool mail_removezeny( struct map_session_data *sd, bool flag ){
 	nullpo_retr( false, sd );
 
 	if( sd->mail.zeny > 0 ){
 		//Zeny send
 		if( flag ){
-			// It's possible that we don't know what the dest_id is, so it will be 0
-			if (pc_payzeny(sd, sd->mail.zeny + sd->mail.zeny * battle_config.mail_zeny_fee / 100, LOG_TYPE_MAIL, sd->mail.dest_id)) {
+			if( pc_payzeny( sd, sd->mail.zeny + sd->mail.zeny * battle_config.mail_zeny_fee / 100, LOG_TYPE_MAIL, NULL ) ){
 				return false;
 			}
 		}else{
@@ -128,7 +126,7 @@ bool mail_removezeny( map_session_data *sd, bool flag ){
 * @param amount : amout of zeny or number of item
 * @return see enum mail_attach_result in mail.hpp
 */
-enum mail_attach_result mail_setitem(map_session_data *sd, short idx, uint32 amount) {
+enum mail_attach_result mail_setitem(struct map_session_data *sd, short idx, uint32 amount) {
 	if( pc_istrading(sd) )
 		return MAIL_ATTACH_ERROR;
 
@@ -188,11 +186,6 @@ enum mail_attach_result mail_setitem(map_session_data *sd, short idx, uint32 amo
 			if( battle_config.mail_attachment_weight ){
 				// Sum up all items to get the current total weight
 				for( j = 0; j < MAIL_MAX_ITEM; j++ ){
-					if (sd->mail.item[j].nameid == 0)
-						continue;
-					if (sd->inventory_data[sd->mail.item[j].index] == nullptr) {
-						return MAIL_ATTACH_ERROR;
-					}
 					total += sd->mail.item[j].amount * ( sd->inventory_data[sd->mail.item[j].index]->weight / 10 );
 				}
 
@@ -218,9 +211,6 @@ enum mail_attach_result mail_setitem(map_session_data *sd, short idx, uint32 amo
 			if( battle_config.mail_attachment_weight ){
 				// Only need to sum up all entries until the new entry
 				for( j = 0; j < i; j++ ){
-					if (sd->inventory_data[sd->mail.item[j].index] == nullptr) {
-						return MAIL_ATTACH_ERROR;
-					}
 					total += sd->mail.item[j].amount * ( sd->inventory_data[sd->mail.item[j].index]->weight / 10 );
 				}
 
@@ -249,7 +239,7 @@ enum mail_attach_result mail_setitem(map_session_data *sd, short idx, uint32 amo
 	}
 }
 
-bool mail_setattachment(map_session_data *sd, struct mail_message *msg)
+bool mail_setattachment(struct map_session_data *sd, struct mail_message *msg)
 {
 	int i, amount;
 
@@ -298,7 +288,7 @@ bool mail_setattachment(map_session_data *sd, struct mail_message *msg)
 	return true;
 }
 
-void mail_getattachment(map_session_data* sd, struct mail_message* msg, int zeny, struct item* item){
+void mail_getattachment(struct map_session_data* sd, struct mail_message* msg, int zeny, struct item* item){
 	int i;
 	bool item_received = false;
 
@@ -363,12 +353,12 @@ void mail_getattachment(map_session_data* sd, struct mail_message* msg, int zeny
 		sd->mail.pending_zeny -= zeny;
 
 		// Add the zeny
-		pc_getzeny(sd, zeny, LOG_TYPE_MAIL, msg->send_id);
+		pc_getzeny(sd, zeny,LOG_TYPE_MAIL, NULL);
 		clif_mail_getattachment( sd, msg, 0, MAIL_ATT_ZENY );
 	}
 }
 
-int mail_openmail(map_session_data *sd)
+int mail_openmail(struct map_session_data *sd)
 {
 	nullpo_ret(sd);
 
@@ -380,7 +370,7 @@ int mail_openmail(map_session_data *sd)
 	return 1;
 }
 
-void mail_deliveryfail(map_session_data *sd, struct mail_message *msg){
+void mail_deliveryfail(struct map_session_data *sd, struct mail_message *msg){
 	int i, zeny = 0;
 
 	nullpo_retv(sd);
@@ -395,14 +385,14 @@ void mail_deliveryfail(map_session_data *sd, struct mail_message *msg){
 	}
 
 	if( msg->zeny > 0 ){
-		pc_getzeny(sd,msg->zeny + msg->zeny*battle_config.mail_zeny_fee/100 + zeny,LOG_TYPE_MAIL); //Zeny receive (due to failure)
+		pc_getzeny(sd,msg->zeny + msg->zeny*battle_config.mail_zeny_fee/100 + zeny,LOG_TYPE_MAIL, NULL); //Zeny receive (due to failure)
 	}
 
 	clif_Mail_send(sd, WRITE_MAIL_FAILED);
 }
 
 // This function only check if the mail operations are valid
-bool mail_invalid_operation(map_session_data *sd)
+bool mail_invalid_operation(struct map_session_data *sd)
 {
 #if PACKETVER < 20150513
 	if( !map_getmapflag(sd->bl.m, MF_TOWN) && !pc_can_use_command(sd, "mail", COMMAND_ATCOMMAND) )
@@ -415,9 +405,9 @@ bool mail_invalid_operation(map_session_data *sd)
 		clif_displaymessage( sd->fd, msg_txt( sd, 796 ) ); // You cannot use RODEX on this map.
 		return true;
 	}
-#endif
 
 	return false;
+#endif
 }
 
 /**
@@ -428,7 +418,7 @@ bool mail_invalid_operation(map_session_data *sd)
 * @param body_msg Mail message
 * @param body_len Message's length
 */
-void mail_send(map_session_data *sd, const char *dest_name, const char *title, const char *body_msg, int body_len) {
+void mail_send(struct map_session_data *sd, const char *dest_name, const char *title, const char *body_msg, int body_len) {
 	struct mail_message msg;
 
 	nullpo_retv(sd);
@@ -446,11 +436,11 @@ void mail_send(map_session_data *sd, const char *dest_name, const char *title, c
 		mail_refresh_remaining_amount(sd);
 
 		// After calling mail_refresh_remaining_amount the status should always be there
-		if( sd->sc.getSCE(SC_DAILYSENDMAILCNT) == NULL || sd->sc.getSCE(SC_DAILYSENDMAILCNT)->val2 >= battle_config.mail_daily_count ){
+		if( sd->sc.data[SC_DAILYSENDMAILCNT] == NULL || sd->sc.data[SC_DAILYSENDMAILCNT]->val2 >= battle_config.mail_daily_count ){
 			clif_Mail_send(sd, WRITE_MAIL_FAILED_CNT);
 			return;
 		}else{
-			sc_start2( &sd->bl, &sd->bl, SC_DAILYSENDMAILCNT, 100, date_get_dayofyear(), sd->sc.getSCE(SC_DAILYSENDMAILCNT)->val2 + 1, INFINITE_TICK );
+			sc_start2( &sd->bl, &sd->bl, SC_DAILYSENDMAILCNT, 100, date_get_dayofyear(), sd->sc.data[SC_DAILYSENDMAILCNT]->val2 + 1, INFINITE_TICK );
 		}
 	}
 
@@ -492,13 +482,13 @@ void mail_send(map_session_data *sd, const char *dest_name, const char *title, c
 	sd->cansendmail_tick = gettick() + battle_config.mail_delay; // Flood Protection
 }
 
-void mail_refresh_remaining_amount( map_session_data* sd ){
+void mail_refresh_remaining_amount( struct map_session_data* sd ){
 	int doy = date_get_dayofyear();
 
 	nullpo_retv(sd);
 
 	// If it was not yet started or it was started on another day
-	if( sd->sc.getSCE(SC_DAILYSENDMAILCNT) == NULL || sd->sc.getSCE(SC_DAILYSENDMAILCNT)->val1 != doy ){
+	if( sd->sc.data[SC_DAILYSENDMAILCNT] == NULL || sd->sc.data[SC_DAILYSENDMAILCNT]->val1 != doy ){
 		sc_start2( &sd->bl, &sd->bl, SC_DAILYSENDMAILCNT, 100, doy, 0, INFINITE_TICK );
 	}
 }
